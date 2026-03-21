@@ -9,11 +9,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source
 COPY . .
 
-# Default database path — overridden to /data/taskbot.db by fly.toml on Fly.io
-# so that the database lives on the persistent volume and survives redeployments.
+# Database lives on the persistent volume mounted at /data
 ENV DATABASE_PATH=/data/taskbot.db
 
-# Ensure the data directory exists for local Docker runs
+# Ensure the data directory exists
 RUN mkdir -p /data
 
-CMD ["python", "bot.py"]
+CMD ["python", "src/bot.py"]

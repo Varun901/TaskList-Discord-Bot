@@ -11,7 +11,7 @@
 2. [Requirements](#2-requirements)
 3. [Adding the Bot to Discord](#3-adding-the-bot-to-discord)
 4. [Installation & Configuration](#4-installation--configuration)
-5. [Hosting the Bot](#5-hosting-the-bot)
+5. [Hosting on Oracle Cloud VM](#5-hosting-on-oracle-cloud-vm)
 6. [User Setup — Connecting Your Calendar](#6-user-setup--connecting-your-calendar)
 7. [Adding Tasks Manually](#7-adding-tasks-manually)
 8. [Command Reference](#8-command-reference)
@@ -43,7 +43,7 @@ Before running the bot you need the following on the machine that will host it:
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Python | 3.10 or later | Download from [python.org](https://python.org) |
+| Python | 3.10 or later | Installed on the Oracle VM — see Section 5 |
 | pip | Latest | Bundled with Python |
 | Discord account | Any | To create the bot application |
 | Internet access | Always-on | Bot must stay connected 24/7 |
@@ -57,7 +57,7 @@ Before running the bot you need the following on the machine that will host it:
 - `python-dotenv` — loads `.env` config file
 - `pytz` — timezone support
 
-> **Optional: Docker** — You can run the bot inside Docker instead of installing Python directly. A `Dockerfile` and `docker-compose.yml` are included. See [Section 5](#5-hosting-the-bot).
+> **Optional: Docker** — You can run the bot inside a Docker container on your Oracle VM instead of installing Python directly. A `Dockerfile` and `docker-compose.yml` are included. See [Option B in Section 5](#option-b--docker-on-oracle-vm).
 
 ---
 
@@ -76,13 +76,13 @@ Before running the bot you need the following on the machine that will host it:
    - **Server Members Intent**
    - **Message Content Intent**
 7. Click **"Save Changes"**.
-8. Click **"Reset Token"** to reveal your bot token. **Copy it** — you will need it in Step 3.
+8. Click **"Reset Token"** to reveal your bot token. **Copy it** — you will need it later.
 
 > **Keep your token secret.** Never share your bot token publicly. Anyone with it can control your bot. If it leaks, regenerate it immediately from the Developer Portal.
 
 ### Step 2 — Invite the Bot to Your Server
 
-The most reliable method is to build the invite URL manually. Replace `YOUR_CLIENT_ID` with your application's Client ID (found on the **"General Information"** page of your app in the Developer Portal):
+Build the invite URL manually. Replace `YOUR_CLIENT_ID` with your application's Client ID (found on the **"General Information"** page of your app in the Developer Portal):
 
 ```
 https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=84992&scope=bot+applications.commands
@@ -99,10 +99,10 @@ The `permissions=84992` covers exactly what the bot needs:
 
 | Permission | Why it's needed |
 |---|---|
+| `View Channels` | Lets the bot see the channels it posts into |
 | `Send Messages` | Posts daily digests and reminder alerts |
 | `Embed Links` | Sends formatted embed cards for task lists |
 | `Read Message History` | Allows the bot to function correctly in channels |
-| `View Channels` | Lets the bot see the channels it posts into |
 
 The bot will now appear in your server's member list but will show as offline until you run it.
 
@@ -112,26 +112,31 @@ The bot will now appear in your server's member list but will show as offline un
 
 ## 4. Installation & Configuration
 
-### Step 1 — Download the Code
-
-Copy the project folder to any directory on your machine. The folder contains:
+### Step 1 — Project Structure
 
 ```
 discord_task_bot/
-├── bot.py                # Main entry point — all slash commands
-├── task_manager.py       # Digest and reminder logic
-├── calendar_fetcher.py   # Google Calendar and Notion fetchers
-├── database.py           # SQLite storage (per-user isolation)
-├── config.py             # Reads environment variables
-├── requirements.txt      # Python dependencies
-├── fly.toml              # Fly.io deployment config
-├── Dockerfile            # Docker image definition
-└── docker-compose.yml    # Docker Compose support (self-hosted)
+├── src/
+│   ├── bot.py                # Entry point — all slash commands
+│   ├── task_manager.py       # Digest and reminder logic
+│   ├── calendar_fetcher.py   # Google Calendar and Notion fetchers
+│   ├── database.py           # SQLite storage (per-user isolation)
+│   └── config.py             # Reads environment variables
+├── Dockerfile                # Docker image definition
+├── docker-compose.yml        # Docker Compose support
+├── requirements.txt          # Python dependencies
+└── .env.example              # Configuration template — copy to .env
 ```
 
 ### Step 2 — Create Your `.env` File
 
-Create a file named `.env` in the project folder. Copy the block below and fill in your values:
+A template is included. Copy it and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+Then open `.env` in any editor and set your values:
 
 ```env
 # Required
@@ -152,29 +157,26 @@ DATABASE_PATH=taskbot.db
 | `TIMEZONE` | `America/Toronto` | Your server's timezone ([full list](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)) |
 | `DATABASE_PATH` | `taskbot.db` | Path to the SQLite file (created automatically) |
 
-> The bot will refuse to start with a clear error message if `DISCORD_BOT_TOKEN` is missing or empty.
+> The bot will refuse to start with a clear error message if `DISCORD_BOT_TOKEN` is missing or empty, or if the hour/minute values are out of range.
 
 ### Step 3 — Install Python Dependencies
 
-Open a terminal in the project folder and run:
-
 ```bash
 # Create and activate a virtual environment
-python -m venv venv
-source venv/bin/activate        # macOS / Linux
-venv\Scripts\activate           # Windows
+python3 -m venv venv
+source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-### Step 4 — Run the Bot
+### Step 4 — Test the Bot Locally
 
 ```bash
-python bot.py
+python src/bot.py
 ```
 
-You should see log output like:
+You should see:
 
 ```
 INFO  TaskBot: Logged in as Task Bot#1234 (ID: 123456789)
@@ -182,174 +184,251 @@ INFO  TaskBot: Slash commands synced.
 INFO  TaskBot: Daily digest scheduled for 08:00 America/Toronto
 ```
 
-> Slash commands may take **1–5 minutes** to appear in Discord after the first sync. The bot must remain running at all times for digests and reminders to fire — see [Section 5](#5-hosting-the-bot).
+> Slash commands may take **1–5 minutes** to appear in Discord after the first sync. Press `Ctrl+C` to stop — Section 5 covers keeping it running permanently on Oracle VM.
 
 ---
 
-## 5. Hosting the Bot
+## 5. Hosting on Oracle Cloud VM
 
-The bot needs to run on *some* machine 24/7. Running it on your own laptop means it goes offline whenever the laptop does. Hosting it in the cloud keeps it always-on without your computer being involved.
+Oracle Cloud's Always Free tier includes two Arm-based VMs (4 OCPUs and 24 GB RAM combined) at no cost, permanently. This is more than enough to run the bot indefinitely.
 
-### Hosting Options Overview
-
-| Platform | Cost | Difficulty | Notes |
-|---|---|---|---|
-| **Fly.io** *(recommended)* | Free tier | Moderate | Always-on, Docker-based, generous free allowance |
-| Railway | Pay-as-you-go | Easy | ~$5/month, very simple but no free tier |
-| Render | Free / $7/month | Easy | Free tier spins down after inactivity — not ideal for bots |
-| Oracle Cloud | Free forever | Hard | Powerful free VM but complex setup |
-| DigitalOcean VPS | ~$4–6/month | Moderate | Full Linux server, most control |
+Two deployment options are covered below. **Option A (systemd)** is simpler to manage day-to-day. **Option B (Docker)** is useful if you prefer container isolation or already run Docker on your VM.
 
 ---
 
-### Option A — Fly.io (Recommended — Free)
+### Option A — Direct Python with systemd (Recommended)
 
-Fly.io runs your bot inside a Docker container on their infrastructure. The free tier includes enough compute to run a Discord bot indefinitely at no cost. The `Dockerfile` is already included — Fly.io uses it automatically.
+systemd runs the bot as a background service, starts it automatically on VM boot, and restarts it immediately if it crashes.
 
-#### Step 1 — Install the Fly CLI
-
-**macOS:**
-```bash
-brew install flyctl
-```
-
-**Windows** (run in PowerShell as Administrator):
-```powershell
-powershell -ExecutionPolicy Bypass -Command "iwr https://fly.io/install.ps1 -useb | iex"
-```
-
-**Linux:**
-```bash
-curl -L https://fly.io/install.sh | sh
-```
-
-#### Step 2 — Sign Up and Log In
+#### Step 1 — Connect to Your VM
 
 ```bash
-fly auth signup
-# or if you already have an account:
-fly auth login
+ssh -i /path/to/your_private_key ubuntu@<your-vm-public-ip>
 ```
 
-This opens a browser window to complete sign-up/login. No credit card is required for the free tier.
+> Your VM's public IP is shown in the OCI Console under **Compute → Instances → your instance → Instance information**.
 
-#### Step 3 — Review the fly.toml Config File
-
-A `fly.toml` is already included in the project. Open it and replace `your-bot-name` with a unique name (lowercase letters, numbers, and hyphens only):
-
-```toml
-app = "your-bot-name"
-primary_region = "yyz"        # Toronto — change to the region closest to you
-
-[build]
-
-[env]
-  DAILY_POST_HOUR   = "8"
-  DAILY_POST_MINUTE = "0"
-  TIMEZONE          = "America/Toronto"
-  DATABASE_PATH     = "/data/taskbot.db"
-
-[mounts]
-  source      = "taskbot_data"
-  destination = "/data"
-
-[[vm]]
-  memory = "256mb"
-  cpu_kind = "shared"
-  cpus = 1
-```
-
-> **Regions:** `yyz` = Toronto. Other options: `ord` (Chicago), `iad` (Virginia), `lhr` (London), `syd` (Sydney). Full list at [fly.io/docs/reference/regions](https://fly.io/docs/reference/regions/).
-
-#### Step 4 — Set Your Bot Token as a Secret
-
-Never put your bot token in `fly.toml` — use Fly's secrets system instead:
+#### Step 2 — Install Python
 
 ```bash
-fly secrets set DISCORD_BOT_TOKEN="your_token_here"
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3 python3-pip python3-venv
 ```
 
-This stores it encrypted and injects it as an environment variable at runtime. You can verify it was saved:
+Verify:
 
 ```bash
-fly secrets list
+python3 --version   # should be 3.10 or later
 ```
 
-#### Step 5 — Create a Persistent Volume for the Database
+#### Step 3 — Upload the Project
 
-The bot uses SQLite to store user data. Fly.io containers reset on redeploy, so you need a persistent volume to keep the database between deployments:
+From your **local machine**, copy the project folder to the VM:
 
 ```bash
-fly volumes create taskbot_data --region yyz --size 1
+scp -i /path/to/your_private_key -r /path/to/discord_task_bot ubuntu@<ip>:~/
 ```
 
-> Use the same region you set in `fly.toml`. `--size 1` means 1 GB, which is more than enough.
-
-#### Step 6 — Deploy
-
-From inside your project folder:
+Or, if the project is in a git repository, clone it directly on the VM:
 
 ```bash
-fly launch --no-deploy   # first time only — reads fly.toml and sets up the app
-fly deploy               # builds and deploys the bot
+git clone <your-repo-url> ~/discord_task_bot
 ```
 
-After deployment you should see:
-
-```
---> v1 deployed successfully
-```
-
-#### Step 7 — Check It's Running
+#### Step 4 — Create the .env File on the VM
 
 ```bash
-fly logs     # view live logs
-fly status   # check app status
+cd ~/discord_task_bot
+cp .env.example .env
+nano .env
 ```
 
-You should see the same log output as running locally.
+Fill in your values and save with `Ctrl+O`, `Enter`, `Ctrl+X`.
 
-#### Useful Fly.io Commands
+Set the database path to keep it inside the project folder:
 
-```bash
-fly logs                  # Live log stream
-fly status                # Is the bot running?
-fly deploy                # Redeploy after code changes
-fly secrets set KEY=value # Update a secret (e.g. new bot token)
-fly ssh console           # SSH into the running container
-fly scale count 1         # Ensure exactly 1 instance is running
+```env
+DISCORD_BOT_TOKEN=your_token_here
+DAILY_POST_HOUR=8
+DAILY_POST_MINUTE=0
+TIMEZONE=America/Toronto
+DATABASE_PATH=/home/ubuntu/discord_task_bot/taskbot.db
 ```
 
-Whenever you change any Python files, run `fly deploy`. Fly rebuilds the Docker image and restarts the bot. Your database volume and secrets are preserved.
-
----
-
-### Option B — Run Locally (Development / Testing Only)
+#### Step 5 — Install Dependencies
 
 ```bash
-python -m venv venv
-source venv/bin/activate    # macOS / Linux
-venv\Scripts\activate       # Windows
-
+cd ~/discord_task_bot
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-python bot.py
 ```
 
-The bot goes offline when you close the terminal or shut down your computer. Use Fly.io for permanent hosting.
+#### Step 6 — Test That It Runs
+
+```bash
+python src/bot.py
+```
+
+Confirm the bot logs in and the slash commands sync, then press `Ctrl+C`.
+
+#### Step 7 — Create a systemd Service
+
+```bash
+sudo nano /etc/systemd/system/taskbot.service
+```
+
+Paste the following exactly — adjust the paths only if you installed in a different directory:
+
+```ini
+[Unit]
+Description=Discord Task Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/discord_task_bot
+EnvironmentFile=/home/ubuntu/discord_task_bot/.env
+ExecStart=/home/ubuntu/discord_task_bot/venv/bin/python src/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Save and close (`Ctrl+O`, `Enter`, `Ctrl+X`).
+
+#### Step 8 — Enable and Start the Service
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable taskbot    # start automatically on boot
+sudo systemctl start taskbot     # start right now
+```
+
+Check it's running:
+
+```bash
+sudo systemctl status taskbot
+```
+
+You should see `Active: active (running)`.
+
+#### Useful Service Commands
+
+```bash
+sudo systemctl status taskbot      # Is it running?
+sudo systemctl restart taskbot     # Restart after changes
+sudo systemctl stop taskbot        # Stop the bot
+sudo systemctl disable taskbot     # Prevent starting on boot
+journalctl -u taskbot -f           # Live log stream
+journalctl -u taskbot -n 100       # Last 100 log lines
+```
+
+#### Updating the Bot After Code Changes
+
+From your **local machine**, upload the changed file(s):
+
+```bash
+scp -i /path/to/key src/bot.py ubuntu@<ip>:~/discord_task_bot/src/
+```
+
+Then restart the service on the VM:
+
+```bash
+sudo systemctl restart taskbot
+journalctl -u taskbot -f   # confirm it came back up cleanly
+```
 
 ---
 
-### Option C — Docker on Your Own Server
+### Option B — Docker on Oracle VM
 
-If you have a Linux VPS (DigitalOcean, Linode, etc.) and prefer managing your own machine:
+Use this if you prefer Docker. The database is stored on a named Docker volume so it survives container restarts and rebuilds.
+
+#### Step 1 — Install Docker
 
 ```bash
-docker compose up -d        # Start in background
-docker compose logs -f      # View logs
-docker compose down         # Stop
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker ubuntu
 ```
 
-Docker will automatically restart the bot if it crashes or the server reboots.
+Log out and back in for the group change to take effect:
+
+```bash
+exit
+ssh -i /path/to/key ubuntu@<ip>
+```
+
+#### Step 2 — Upload the Project and Create .env
+
+```bash
+# From your local machine
+scp -i /path/to/key -r /path/to/discord_task_bot ubuntu@<ip>:~/
+```
+
+Then on the VM:
+
+```bash
+cd ~/discord_task_bot
+nano .env
+```
+
+Use `/data/taskbot.db` as the database path — this is where Docker mounts the persistent volume:
+
+```env
+DISCORD_BOT_TOKEN=your_token_here
+DAILY_POST_HOUR=8
+DAILY_POST_MINUTE=0
+TIMEZONE=America/Toronto
+DATABASE_PATH=/data/taskbot.db
+```
+
+#### Step 3 — Start with Docker Compose
+
+```bash
+docker compose up -d        # build image and start in background
+docker compose logs -f      # stream logs
+```
+
+Docker Compose is configured with `restart: unless-stopped`, so the bot restarts automatically on crash or VM reboot.
+
+#### Useful Docker Commands
+
+```bash
+docker compose logs -f          # Live log stream
+docker compose ps               # Is the container running?
+docker compose restart          # Restart the bot
+docker compose down             # Stop and remove the container
+docker compose up -d --build    # Rebuild image after code changes
+```
+
+#### Updating the Bot After Code Changes
+
+```bash
+# From local machine — upload changed files
+scp -i /path/to/key src/bot.py ubuntu@<ip>:~/discord_task_bot/src/
+
+# On the VM — rebuild and restart
+cd ~/discord_task_bot
+docker compose up -d --build
+```
+
+---
+
+### Option C — Run Locally (Development / Testing Only)
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python src/bot.py
+```
+
+The bot goes offline when you close the terminal or shut down your computer. Use Option A or B on the Oracle VM for permanent hosting.
 
 ---
 
@@ -379,7 +458,7 @@ Every user in the server sets up independently. Their data is completely private
    ```
 6. In Discord, run:
    ```
-   /setup source:google calendar_id:<paste your ID here> channel:#your-channel
+   /setup source:Google Calendar calendar_id:<paste your ID here> channel:#your-channel
    ```
 
 > **What gets fetched?** The bot reads events from your Google Calendar's public iCal feed. Google Tasks are **not** included — only Calendar Events appear. The calendar must remain public for the bot to access it.
@@ -423,7 +502,7 @@ The bot also looks for a `Description`, `Notes`, or `Body` rich-text property to
 #### Run the Setup Command
 
 ```
-/setup source:notion calendar_id:<database-id> channel:#your-channel notion_token:<secret_...>
+/setup source:Notion calendar_id:<database-id> channel:#your-channel notion_token:<secret_...>
 ```
 
 ---
@@ -544,16 +623,18 @@ The nudge embed shows:
 
 | Problem | Likely Cause | Fix |
 |---|---|---|
-| Bot won't start: "DISCORD_BOT_TOKEN is not set" | Missing `.env` file or empty token | Create `.env` and set `DISCORD_BOT_TOKEN` to your token from the Developer Portal |
+| Bot won't start: "DISCORD_BOT_TOKEN is not set" | Missing `.env` file or empty token | Create `.env` in the project root and set `DISCORD_BOT_TOKEN` |
+| Bot won't start: hour/minute out of range | Invalid schedule values in `.env` | Set `DAILY_POST_HOUR` to 0–23 and `DAILY_POST_MINUTE` to 0–59 |
 | Commands don't appear in Discord | Slash commands haven't propagated yet | Wait 5–10 minutes after starting the bot for the first time |
+| systemd service won't start | Wrong paths in service file | Run `journalctl -u taskbot -n 50` and check the error; verify all paths in the `[Service]` section |
 | Google Calendar returns no tasks | Calendar is not set to public | Go to Calendar Settings → Access Permissions → Make available to public |
 | Google Calendar returns wrong tasks | Wrong Calendar ID | Confirm the ID in Google Calendar → Settings and sharing → Integrate calendar |
 | Notion returns `401 Unauthorized` | Invalid token or integration not connected | Check the token starts with `secret_` and the integration is added to the database via Connections |
 | Notion returns `404 Not Found` | Wrong Database ID | Copy the 32-character ID from the Notion page URL — not a page inside the database |
 | Notion tasks not showing for a date | Date property name not recognised | Rename your date property to one of: `Date`, `Due`, `Due Date`, or `Deadline` |
-| Daily digest not posting | Bot is offline or wrong channel | Confirm `bot.py` is running and the channel in `/status` is correct and accessible |
+| Daily digest not posting | Bot is offline or wrong channel | Run `sudo systemctl status taskbot` and check the channel in `/status` is accessible |
 | Reminders not firing | Bot was offline at reminder time | Keep the bot running 24/7 — overdue reminders fire on next startup |
-| Can't see bot commands | Missing `applications.commands` scope | Re-invite the bot using the manual OAuth2 URL in [Section 3](#3-adding-the-bot-to-discord) |
+| Can't see bot commands | Missing `applications.commands` scope | Re-invite the bot using the OAuth2 URL in [Section 3](#3-adding-the-bot-to-discord) |
 | `/setup` says "Could not connect" | Calendar not public / bad Notion token | Follow the setup steps in [Section 6](#6-user-setup--connecting-your-calendar) exactly |
 
 ---
@@ -574,7 +655,7 @@ Yes, for as long as you want the bot to fetch your tasks. If you make it private
 
 **Are my Notion tokens stored securely?**
 
-Tokens are stored in the local SQLite database on the machine running the bot. Use a dedicated integration token with **read-only** access and restrict network access to the bot host machine. The bot never writes to or modifies your Notion data.
+Tokens are stored in the local SQLite database on the Oracle VM. Use a dedicated integration token with **read-only** access. The bot never writes to or modifies your Notion data.
 
 **What happens if I run `/setup` again?**
 
