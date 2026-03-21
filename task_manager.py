@@ -1,0 +1,309 @@
+"""
+task_manager.py
+───────────────
+Orchestration: embed building, daily digest, weekly summary, reminders.
+"""
+
+import logging
+from datetime import date, datetime, timedelta
+from typing import Optional, Tuple, List
+
+import discord
+import pytz
+
+from config import TIMEZONE
+from database import Database
+from calendar_fetcher import fetch_tasks, Task
+
+log = logging.getLogger("TaskManager")
+
+_SOURCE_EMOJI = {"google": "📅", "notion": "📝"}
+_WEEKDAY_EMOJI = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def _progress_bar(done: int, total: int, width: int = 10) -> str:
+    if total == 0:
+        return f"[{'░' * width}] —"
+    pct = int(done / total * 100)
+    filled = round(done / total * width)
+    bar = "█" * filled + "░" * (width - filled)
+    return f"[{bar}] {pct}%"
+
+
+class TaskManager:
+    def __init__(self, db: Database):
+        self.db = db
+
+    # ── Validation ────────────────────────────────────────────────────────────
+
+    async def validate_source(self, source, calendar_id, notion_token) -> Tuple[bool, str]:
+        ok, err, _ = await fetch_tasks(source, calendar_id, notion_token, target_date=date.today())
+        return ok, err
+
+    # ── Task Embed ────────────────────────────────────────────────────────────
+
+    async def build_task_embed(
+        self,
+        member: discord.User | discord.Member,
+        user_row: dict,
+        target_date: date,
+    ) -> discord.Embed:
+        source = user_row["source"]
+        emoji = _SOURCE_EMOJI.get(source, "📆")
+        title = f"{emoji}  {member.display_name}'s Tasks — {target_date.strftime('%A, %B %-d')}"
+
+        ok, err, cal_tasks = await fetch_tasks(
+            source, user_row["calendar_id"], user_row.get("notion_token"), target_date
+        )
+
+        color = 0x5865F2 if ok else 0xED4245
+        embed = discord.Embed(title=title, color=color)
+        embed.set_thumbnail(url=member.display_avatar.url)
+
+        if not ok:
+            embed.description = f"⚠️ Could not fetch calendar tasks: `{err}`"
+
+        # Manual tasks for this date
+        manual_tasks = self.db.get_manual_tasks(member.id, target_date=target_date)
+
+        # Completed names (lowercased) for cross-referencing
+        completed_today = self.db.get_completed_today(member.id)
+        completed_lower = [c.lower() for c in completed_today]
+
+        def _is_done(name: str) -> bool:
+            nl = name.lower()
+            return any(nl in c or c in nl for c in completed_lower)
+
+        today = date.today()
+
+        def _task_line(name: str, due: Optional[date], desc: str, url: Optional[str], status_emoji: str) -> str:
+            line = f"{status_emoji} **{name}**"
+            if due:
+                line += f"  `{due.strftime('%b %-d')}`"
+            if desc:
+                snippet = desc[:80] + ("…" if len(desc) > 80 else "")
+                line += f"\n   ↳ {snippet}"
+            if url:
+                line += f"\n   🔗 [Open]({url})"
+            return line
+
+        # Categorise calendar tasks
+        cal_pending, cal_done, cal_overdue = [], [], []
+        if ok:
+            for t in cal_tasks:
+                done = _is_done(t["name"])
+                overdue = t["due"] and t["due"] < today and not done
+                if done:
+                    cal_done.append(t)
+                elif overdue:
+                    cal_overdue.append(t)
+                else:
+                    cal_pending.append(t)
+
+        # Categorise manual tasks
+        man_pending, man_done = [], []
+        for m in manual_tasks:
+            if m["done"] or _is_done(m["name"]):
+                man_done.append(m)
+            else:
+                man_pending.append(m)
+
+        # Totals for progress bar
+        total_tasks = len(cal_tasks) + len(manual_tasks) if ok else len(manual_tasks)
+        total_done = len(cal_done) + len(man_done)
+
+        # Build fields
+        if cal_overdue:
+            embed.add_field(
+                name="🔴 Overdue",
+                value="\n\n".join(_task_line(t["name"], t["due"], t["description"], t["url"], "🔴") for t in cal_overdue),
+                inline=False,
+            )
+
+        pending_lines = []
+        for t in cal_pending:
+            pending_lines.append(_task_line(t["name"], t["due"], t["description"], t["url"], "🔲"))
+        for m in man_pending:
+            pending_lines.append(_task_line(m["name"], m.get("due_date"), m.get("description", ""), None, "🔲"))
+
+        if pending_lines:
+            embed.add_field(
+                name=f"🔲 Pending ({len(pending_lines)})",
+                value="\n\n".join(pending_lines),
+                inline=False,
+            )
+
+        done_lines = []
+        for t in cal_done:
+            done_lines.append(_task_line(t["name"], t["due"], t["description"], t["url"], "✅"))
+        for m in man_done:
+            done_lines.append(_task_line(m["name"], m.get("due_date"), m.get("description", ""), None, "✅"))
+
+        if done_lines:
+            embed.add_field(
+                name=f"✅ Completed ({len(done_lines)})",
+                value="\n\n".join(done_lines),
+                inline=False,
+            )
+
+        if not pending_lines and not done_lines and not cal_overdue:
+            embed.description = (embed.description or "") + "\n\n🎉 No tasks scheduled for this day!"
+
+        bar = _progress_bar(total_done, total_tasks)
+        embed.set_footer(text=f"Progress: {bar}  •  {source.title()} + Manual")
+        return embed
+
+    # ── Weekly Summary ────────────────────────────────────────────────────────
+
+    async def build_weekly_embed(
+        self,
+        member: discord.User | discord.Member,
+        user_row: dict,
+    ) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"📊  Weekly Summary — {member.display_name}",
+            color=0xEB459E,
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+
+        weekly = self.db.get_weekly_completions(member.id)
+        streak = self.db.get_completion_streak(member.id)
+        total_all_time = self.db.get_total_completed(member.id)
+
+        # Build a mini bar chart per day
+        today = date.today()
+        day_map = {}
+        for row in weekly:
+            day_map[row["day"]] = row["count"]
+
+        chart_lines = []
+        total_week = 0
+        for i in range(6, -1, -1):
+            d = today - timedelta(days=i)
+            key = d.isoformat()
+            count = day_map.get(key, 0)
+            total_week += count
+            bar = "█" * min(count, 10) + ("+" if count > 10 else "")
+            label = "Today" if i == 0 else d.strftime("%a %-d")
+            chart_lines.append(f"`{label:<8}` {bar or '·'}  ({count})")
+
+        embed.add_field(
+            name="📅 Tasks completed this week",
+            value="\n".join(chart_lines),
+            inline=False,
+        )
+
+        # Stats row
+        embed.add_field(name="📦 This week", value=str(total_week), inline=True)
+        embed.add_field(name="🔥 Streak", value=f"{streak} day{'s' if streak != 1 else ''}", inline=True)
+        embed.add_field(name="🏆 All time", value=str(total_all_time), inline=True)
+
+        # Upcoming tasks (next 7 days from calendar)
+        source = user_row["source"]
+        try:
+            upcoming: List[Task] = []
+            for days_ahead in range(1, 8):
+                future_date = today + timedelta(days=days_ahead)
+                ok, _, tasks = await fetch_tasks(
+                    source, user_row["calendar_id"], user_row.get("notion_token"), future_date
+                )
+                if ok:
+                    upcoming.extend(tasks)
+            if upcoming:
+                upcoming_lines = []
+                for t in upcoming[:8]:
+                    due_str = t["due"].strftime("%a %-d") if t["due"] else "—"
+                    upcoming_lines.append(f"• **{t['name']}**  `{due_str}`")
+                embed.add_field(
+                    name="🗓️ Coming up (next 7 days)",
+                    value="\n".join(upcoming_lines),
+                    inline=False,
+                )
+        except Exception as exc:
+            log.warning(f"Could not fetch upcoming tasks for weekly summary: {exc}")
+
+        # Manual tasks pending
+        pending_manual = self.db.get_manual_tasks(member.id, include_done=False)
+        if pending_manual:
+            lines = []
+            for m in pending_manual[:5]:
+                due = m["due_date"].strftime("%b %-d") if m.get("due_date") else "no date"
+                lines.append(f"• **{m['name']}**  `{due}`")
+            if len(pending_manual) > 5:
+                lines.append(f"_…and {len(pending_manual) - 5} more_")
+            embed.add_field(
+                name="📝 Pending Manual Tasks",
+                value="\n".join(lines),
+                inline=False,
+            )
+
+        embed.set_footer(text=f"Week ending {today.strftime('%B %-d, %Y')}")
+        return embed
+
+    # ── Daily Digest ──────────────────────────────────────────────────────────
+
+    async def post_daily_digest(self, bot: discord.Client):
+        users = self.db.get_all_users()
+        today = date.today()
+
+        for user_row in users:
+            try:
+                channel = bot.get_channel(user_row["channel_id"])
+                if not channel:
+                    continue
+                member = channel.guild.get_member(user_row["user_id"])
+                if not member:
+                    try:
+                        member = await channel.guild.fetch_member(user_row["user_id"])
+                    except Exception:
+                        continue
+
+                embed = await self.build_task_embed(member, user_row, today)
+                await channel.send(
+                    content=f"🌅 Good morning {member.mention}! Here are your tasks for today:",
+                    embed=embed,
+                )
+                log.info(f"Posted digest for user {user_row['user_id']}")
+            except Exception as exc:
+                log.error(f"Digest error for user {user_row['user_id']}: {exc}", exc_info=True)
+
+    # ── Reminder Firing ───────────────────────────────────────────────────────
+
+    async def fire_due_reminders(self, bot: discord.Client):
+        due = self.db.get_due_reminders()
+        for reminder in due:
+            try:
+                user_row = self.db.get_user(reminder["user_id"])
+                if not user_row:
+                    self.db.mark_reminder_fired(reminder["id"])
+                    continue
+                channel = bot.get_channel(user_row["channel_id"])
+                if not channel:
+                    self.db.mark_reminder_fired(reminder["id"])
+                    continue
+                member = channel.guild.get_member(reminder["user_id"])
+                if not member:
+                    try:
+                        member = await channel.guild.fetch_member(reminder["user_id"])
+                    except Exception:
+                        self.db.mark_reminder_fired(reminder["id"])
+                        continue
+
+                # Build reminder embed with snooze hint
+                embed = discord.Embed(
+                    title="⏰ Task Reminder",
+                    description=f"Don't forget: **{reminder['task_name']}**",
+                    color=0xFEE75C,
+                )
+                embed.set_footer(
+                    text="Use /complete to mark it done • /snooze to delay by 30 min"
+                )
+                snoozed = reminder.get("snoozed", 0)
+                if snoozed:
+                    embed.add_field(name="💤 Snoozed", value=f"{snoozed}×", inline=True)
+
+                await channel.send(content=f"{member.mention}", embed=embed)
+                self.db.mark_reminder_fired(reminder["id"])
+                log.info(f"Fired reminder {reminder['id']} for user {reminder['user_id']}")
+            except Exception as exc:
+                log.error(f"Reminder error {reminder['id']}: {exc}", exc_info=True)
