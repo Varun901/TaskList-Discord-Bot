@@ -85,7 +85,7 @@ Before running the bot you need the following on the machine that will host it:
 The most reliable method is to build the invite URL manually. Replace `YOUR_CLIENT_ID` with your application's Client ID (found on the **"General Information"** page of your app in the Developer Portal):
 
 ```
-https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=51200&scope=bot+applications.commands
+https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=84992&scope=bot+applications.commands
 ```
 
 **How to find your Client ID:**
@@ -95,7 +95,7 @@ https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=51200&
 
 Paste the completed URL into your browser, select your server from the dropdown, and click **Authorise**.
 
-The `permissions=51200` covers exactly what the bot needs:
+The `permissions=84992` covers exactly what the bot needs:
 
 | Permission | Why it's needed |
 |---|---|
@@ -124,8 +124,9 @@ discord_task_bot/
 ├── database.py           # SQLite storage (per-user isolation)
 ├── config.py             # Reads environment variables
 ├── requirements.txt      # Python dependencies
-├── Dockerfile            # Docker support
-└── docker-compose.yml    # Docker Compose support
+├── fly.toml              # Fly.io deployment config
+├── Dockerfile            # Docker image definition
+└── docker-compose.yml    # Docker Compose support (self-hosted)
 ```
 
 ### Step 2 — Create Your `.env` File
@@ -476,7 +477,7 @@ Permanently removes the task from the database.
 
 | Command | Description |
 |---|---|
-| `/setup` | Link your Google Calendar or Notion database. Run this first. *(private)* |
+| `/setup` | Link your Google Calendar or Notion database. Choose the source from the dropdown. *(private)* |
 | `/status` | Show your current configuration, streak, and stats. *(private)* |
 | `/unlink` | Remove all your data from the bot. *(private)* |
 

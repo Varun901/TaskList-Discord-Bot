@@ -18,7 +18,6 @@ from calendar_fetcher import fetch_tasks, Task
 log = logging.getLogger("TaskManager")
 
 _SOURCE_EMOJI = {"google": "📅", "notion": "📝"}
-_WEEKDAY_EMOJI = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
 def _progress_bar(done: int, total: int, width: int = 10) -> str:

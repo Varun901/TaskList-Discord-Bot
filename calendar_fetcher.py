@@ -13,7 +13,6 @@ All functions are async and return a list of Task dicts:
     }
 """
 
-import asyncio
 import logging
 from datetime import date, datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
@@ -148,7 +147,7 @@ async def fetch_notion_tasks(
 ) -> Tuple[bool, str, List[Task]]:
     """
     Fetches pages from a Notion database.
-    Looks for a 'Date' or 'Due' property for filtering.
+    Filters by any of the common date property names: Date, Due, Due Date, Deadline.
     Returns (success, error_msg, tasks).
     """
     headers = _notion_headers(token)
