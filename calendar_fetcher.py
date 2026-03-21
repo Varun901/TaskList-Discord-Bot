@@ -56,7 +56,7 @@ async def fetch_google_tasks(
             resp = await client.get(url)
             if resp.status_code != 200:
                 return False, f"HTTP {resp.status_code}", []
-            cal = iCal.from_ical(resp.content)
+            cal = iCal.from_ical(resp.content.decode("utf-8", errors="replace"))
     except Exception as exc:
         return False, str(exc), []
 
@@ -163,6 +163,7 @@ async def fetch_notion_tasks(
                 {"property": "Date", "date": {"equals": date_str}},
                 {"property": "Due", "date": {"equals": date_str}},
                 {"property": "Due Date", "date": {"equals": date_str}},
+                {"property": "Deadline", "date": {"equals": date_str}},
             ]
         }
 

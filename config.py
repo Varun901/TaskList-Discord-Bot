@@ -4,7 +4,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Discord ────────────────────────────────────────────────────────────────────
-BOT_TOKEN: str = os.getenv("DISCORD_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+_raw_token = os.getenv("DISCORD_BOT_TOKEN", "")
+if not _raw_token:
+    raise RuntimeError(
+        "DISCORD_BOT_TOKEN is not set. "
+        "Add it to your .env file or set it as an environment variable."
+    )
+BOT_TOKEN: str = _raw_token
 
 # ── Daily Digest Schedule ─────────────────────────────────────────────────────
 # Time (24h) at which the bot posts everyone's daily task list.

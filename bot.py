@@ -13,6 +13,7 @@ import pytz
 from config import BOT_TOKEN, DAILY_POST_HOUR, DAILY_POST_MINUTE, TIMEZONE
 from database import Database
 from task_manager import TaskManager
+from calendar_fetcher import fetch_tasks
 
 logging.basicConfig(
     level=logging.INFO,
@@ -100,7 +101,7 @@ async def setup(
     source: str,
     calendar_id: str,
     channel: discord.TextChannel,
-    notion_token: str = None,
+    notion_token: str | None = None,
 ):
     await interaction.response.defer(ephemeral=True)
     source = source.lower()
@@ -135,7 +136,7 @@ async def setup(
 
 @bot.tree.command(name="tasks", description="Show your tasks for today or a specific date.")
 @app_commands.describe(date="Date in YYYY-MM-DD format (defaults to today)")
-async def show_tasks(interaction: discord.Interaction, date: str = None):
+async def show_tasks(interaction: discord.Interaction, date: str | None = None):
     await interaction.response.defer(ephemeral=True)
     user = _require_setup(interaction.user.id)
     if not user:
@@ -186,7 +187,7 @@ async def complete_task(interaction: discord.Interaction, task_name: str):
 async def add_task(
     interaction: discord.Interaction,
     name: str,
-    due: str = None,
+    due: str | None = None,
     description: str = "",
 ):
     await interaction.response.defer(ephemeral=True)
@@ -394,7 +395,7 @@ async def status(interaction: discord.Interaction):
     member="The server member you want to nudge",
     message="Optional custom message (default: a friendly reminder)",
 )
-async def nudge(interaction: discord.Interaction, member: discord.Member, message: str = None):
+async def nudge(interaction: discord.Interaction, member: discord.Member, message: str | None = None):
     await interaction.response.defer(ephemeral=False)  # visible to channel
 
     # Can't nudge yourself
@@ -432,13 +433,11 @@ async def nudge(interaction: discord.Interaction, member: discord.Member, messag
 
     # Fetch today's pending count for the nudged user (without exposing task names)
     try:
-        from calendar_fetcher import fetch_tasks
-        from datetime import date as _date
         ok, _, cal_tasks = await fetch_tasks(
             target_user["source"],
             target_user["calendar_id"],
             target_user.get("notion_token"),
-            _date.today(),
+            date.today(),
         )
         completed = db.get_completed_today(member.id)
         completed_lower = [c.lower() for c in completed]
