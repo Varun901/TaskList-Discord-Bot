@@ -1,4 +1,15 @@
 # Discord Task Bot
+
+## Add TaskList Bot to Your Server
+
+Click the link below to add the bot to any Discord server you manage:
+
+[➕ Add to Discord](https://discord.com/oauth2/authorize?client_id=1484984465259499580&permissions=534723950656&scope=bot+applications.commands)
+
+> The bot is hosted and maintained. No setup required on your end —
+> just add it to your server and each member runs `/setup` to link
+> their own calendar.
+> 
 ### Complete Setup & User Guide
 
 > Fetch tasks from Google Calendar or Notion • Daily digests • Reminders • Manual tasks • Nudge teammates
