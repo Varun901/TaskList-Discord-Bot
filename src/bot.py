@@ -4,6 +4,7 @@ bot.py — Discord Task Bot entry point
 
 import logging
 from datetime import datetime, timedelta, date
+from typing import Literal
 
 import discord
 from discord import app_commands
@@ -13,6 +14,7 @@ import pytz
 from config import BOT_TOKEN, DAILY_POST_HOUR, DAILY_POST_MINUTE, TIMEZONE
 from database import Database
 from task_manager import TaskManager
+from calendar_fetcher import fetch_tasks
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,8 +38,12 @@ async def on_ready():
     log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
     await bot.tree.sync()
     log.info("Slash commands synced.")
-    daily_digest.start()
-    reminder_loop.start()
+    # Guard against on_ready firing again on reconnect — starting a loop that
+    # is already running raises a RuntimeError.
+    if not daily_digest.is_running():
+        daily_digest.start()
+    if not reminder_loop.is_running():
+        reminder_loop.start()
     log.info(f"Daily digest scheduled for {DAILY_POST_HOUR:02d}:{DAILY_POST_MINUTE:02d} {TIMEZONE}")
 
 
@@ -97,16 +103,14 @@ def _require_setup(user_id: int) -> dict | None:
 )
 async def setup(
     interaction: discord.Interaction,
-    source: str,
+    source: Literal["google", "notion"],
     calendar_id: str,
     channel: discord.TextChannel,
-    notion_token: str = None,
+    notion_token: str | None = None,
 ):
     await interaction.response.defer(ephemeral=True)
-    source = source.lower()
-    if source not in ("google", "notion"):
-        await interaction.followup.send("❌ `source` must be `google` or `notion`.", ephemeral=True)
-        return
+    # source is constrained to "google" | "notion" by the Literal type,
+    # which Discord renders as a dropdown — no free-text validation needed.
     if source == "notion" and not notion_token:
         await interaction.followup.send("❌ `notion_token` is required for Notion.", ephemeral=True)
         return
@@ -135,7 +139,7 @@ async def setup(
 
 @bot.tree.command(name="tasks", description="Show your tasks for today or a specific date.")
 @app_commands.describe(date="Date in YYYY-MM-DD format (defaults to today)")
-async def show_tasks(interaction: discord.Interaction, date: str = None):
+async def show_tasks(interaction: discord.Interaction, date: str | None = None):
     await interaction.response.defer(ephemeral=True)
     user = _require_setup(interaction.user.id)
     if not user:
@@ -186,7 +190,7 @@ async def complete_task(interaction: discord.Interaction, task_name: str):
 async def add_task(
     interaction: discord.Interaction,
     name: str,
-    due: str = None,
+    due: str | None = None,
     description: str = "",
 ):
     await interaction.response.defer(ephemeral=True)
@@ -394,7 +398,7 @@ async def status(interaction: discord.Interaction):
     member="The server member you want to nudge",
     message="Optional custom message (default: a friendly reminder)",
 )
-async def nudge(interaction: discord.Interaction, member: discord.Member, message: str = None):
+async def nudge(interaction: discord.Interaction, member: discord.Member, message: str | None = None):
     await interaction.response.defer(ephemeral=False)  # visible to channel
 
     # Can't nudge yourself
@@ -432,13 +436,11 @@ async def nudge(interaction: discord.Interaction, member: discord.Member, messag
 
     # Fetch today's pending count for the nudged user (without exposing task names)
     try:
-        from calendar_fetcher import fetch_tasks
-        from datetime import date as _date
         ok, _, cal_tasks = await fetch_tasks(
             target_user["source"],
             target_user["calendar_id"],
             target_user.get("notion_token"),
-            _date.today(),
+            date.today(),
         )
         completed = db.get_completed_today(member.id)
         completed_lower = [c.lower() for c in completed]

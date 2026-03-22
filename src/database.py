@@ -1,6 +1,6 @@
 import sqlite3
 import logging
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
 import pytz
@@ -97,7 +97,7 @@ class Database:
 
     # ── Manual Tasks ──────────────────────────────────────────────────────────
 
-    def add_manual_task(self, user_id: int, name: str, description: str = "", due_date: Optional[date] = None) -> int:
+    def add_manual_task(self, user_id: int, name: str, description: str = "", due_date: Optional[date] = None) -> Optional[int]:
         due_str = due_date.isoformat() if due_date else None
         with self._connect() as conn:
             cur = conn.execute(
@@ -180,7 +180,8 @@ class Database:
     # ── Reminders ─────────────────────────────────────────────────────────────
 
     def set_reminder(self, user_id: int, task_name: str, remind_at: datetime) -> str:
-        remind_utc = remind_at.astimezone(pytz.utc).isoformat()
+        # Store as plain UTC string (no offset suffix) so SQLite string comparison works correctly.
+        remind_utc = remind_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO reminders (user_id, task_name, remind_at) VALUES (?, ?, ?)",
@@ -198,12 +199,18 @@ class Database:
         result = []
         for r in rows:
             d = dict(r)
-            d["remind_at"] = datetime.fromisoformat(d["remind_at"]).astimezone(tz)
+            # Stored as plain UTC string; attach UTC tzinfo before converting to local.
+            d["remind_at"] = (
+                datetime.fromisoformat(d["remind_at"])
+                .replace(tzinfo=timezone.utc)
+                .astimezone(tz)
+            )
             result.append(d)
         return result
 
     def get_due_reminders(self) -> List[Dict[str, Any]]:
-        now_utc = datetime.utcnow().isoformat()
+        # Use the same plain UTC format used when storing reminders.
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         with self._connect() as conn:
             return [dict(r) for r in conn.execute(
                 "SELECT * FROM reminders WHERE fired=0 AND remind_at<=?", (now_utc,)
@@ -214,7 +221,7 @@ class Database:
             conn.execute("UPDATE reminders SET fired=1 WHERE id=?", (reminder_id,))
 
     def snooze_reminder(self, reminder_id: int, new_remind_at: datetime):
-        new_utc = new_remind_at.astimezone(pytz.utc).isoformat()
+        new_utc = new_remind_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         with self._connect() as conn:
             conn.execute(
                 "UPDATE reminders SET remind_at=?, fired=0, snoozed=snoozed+1 WHERE id=?",
