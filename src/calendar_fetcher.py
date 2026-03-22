@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 calendar_fetcher.py
 ──────────────────
@@ -7,15 +8,15 @@ Fetches tasks/events from Google Calendar (public iCal feed) or Notion
 All functions are async and return a list of Task dicts:
     {
         "name":        str,
-        "due":         date | None,
+        "due":         Optional[date],
         "description": str,
-        "url":         str | None,
+        "url":         Optional[str],
     }
 """
 
 import logging
 from datetime import date, datetime, timezone
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Optional, List, Dict, Any, Optional, Tuple
 
 import httpx
 from icalendar import Calendar as iCal

@@ -1,10 +1,12 @@
+from __future__ import annotations
+from __future__ import annotations
 """
 bot.py — Discord Task Bot entry point
 """
 
 import logging
 from datetime import datetime, timedelta, date
-from typing import Literal
+from typing import Optional, Literal
 
 import discord
 from discord import app_commands
@@ -71,7 +73,7 @@ async def before_loops():
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def _parse_date(date_str: str | None) -> date | None:
+def _parse_date(date_str: Optional[str]) -> Optional[date]:
     if date_str is None:
         return datetime.now(pytz.timezone(TIMEZONE)).date()
     try:
@@ -80,7 +82,7 @@ def _parse_date(date_str: str | None) -> date | None:
         return None
 
 
-def _parse_datetime(dt_str: str) -> datetime | None:
+def _parse_datetime(dt_str: str) -> Optional[datetime]:
     try:
         naive = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
         return pytz.timezone(TIMEZONE).localize(naive)
@@ -88,7 +90,7 @@ def _parse_datetime(dt_str: str) -> datetime | None:
         return None
 
 
-def _require_setup(user_id: int) -> dict | None:
+def _require_setup(user_id: int) -> Optional[dict]:
     return db.get_user(user_id)
 
 
@@ -106,7 +108,7 @@ async def setup(
     source: Literal["google", "notion"],
     calendar_id: str,
     channel: discord.TextChannel,
-    notion_token: str | None = None,
+    notion_token: Optional[str] = None,
 ):
     await interaction.response.defer(ephemeral=True)
     # source is constrained to "google" | "notion" by the Literal type,
@@ -139,7 +141,7 @@ async def setup(
 
 @bot.tree.command(name="tasks", description="Show your tasks for today or a specific date.")
 @app_commands.describe(date="Date in YYYY-MM-DD format (defaults to today)")
-async def show_tasks(interaction: discord.Interaction, date: str | None = None):
+async def show_tasks(interaction: discord.Interaction, date: Optional[str] = None):
     await interaction.response.defer(ephemeral=True)
     user = _require_setup(interaction.user.id)
     if not user:
@@ -190,7 +192,7 @@ async def complete_task(interaction: discord.Interaction, task_name: str):
 async def add_task(
     interaction: discord.Interaction,
     name: str,
-    due: str | None = None,
+    due: Optional[str] = None,
     description: str = "",
 ):
     await interaction.response.defer(ephemeral=True)
@@ -398,7 +400,7 @@ async def status(interaction: discord.Interaction):
     member="The server member you want to nudge",
     message="Optional custom message (default: a friendly reminder)",
 )
-async def nudge(interaction: discord.Interaction, member: discord.Member, message: str | None = None):
+async def nudge(interaction: discord.Interaction, member: discord.Member, message: Optional[str] = None):
     await interaction.response.defer(ephemeral=False)  # visible to channel
 
     # Can't nudge yourself
