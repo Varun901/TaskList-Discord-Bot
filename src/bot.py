@@ -214,27 +214,79 @@ async def add_task(
 
 # ─── /mytasks ─────────────────────────────────────────────────────────────────
 
-@bot.tree.command(name="mytasks", description="List all your manual (non-calendar) tasks.")
+@bot.tree.command(name="mytasks", description="List your manual tasks and today's calendar tasks.")
 @app_commands.describe(show_done="Include completed tasks (default: false)")
 async def my_tasks(interaction: discord.Interaction, show_done: bool = False):
     await interaction.response.defer(ephemeral=True)
-    if not _require_setup(interaction.user.id):
+    user = _require_setup(interaction.user.id)
+    if not user:
         await interaction.followup.send("❌ Run `/setup` first.", ephemeral=True)
         return
 
-    tasks_list = db.get_manual_tasks(interaction.user.id, include_done=show_done)
-    if not tasks_list:
-        await interaction.followup.send("📭 No manual tasks found.", ephemeral=True)
-        return
+    today = datetime.now(pytz.timezone(TIMEZONE)).date()
+    embed = discord.Embed(
+        title=f"📋 Your Tasks — {today.strftime('%A, %B %-d')}",
+        color=0x57F287,
+    )
 
-    embed = discord.Embed(title="📝 Your Manual Tasks", color=0x57F287)
-    for t in tasks_list:
-        status = "✅" if t["done"] else "🔲"
-        due = t["due_date"].strftime("%b %-d") if t.get("due_date") else "No due date"
-        val = f"📅 {due}"
-        if t.get("description"):
-            val += f"\n{t['description'][:100]}"
-        embed.add_field(name=f"{status} {t['name']}", value=val, inline=False)
+    # ── Calendar tasks for today ──────────────────────────────────────────────
+    ok, err, cal_tasks = await fetch_tasks(
+        user["source"], user["calendar_id"], user.get("notion_token"), today
+    )
+
+    completed_today = db.get_completed_today(interaction.user.id)
+    completed_lower = [c.lower() for c in completed_today]
+
+    def _is_done(name: str) -> bool:
+        nl = name.lower()
+        return any(nl in c or c in nl for c in completed_lower)
+
+    if ok and cal_tasks:
+        cal_lines = []
+        for t in cal_tasks:
+            if not show_done and _is_done(t["name"]):
+                continue
+            status = "✅" if _is_done(t["name"]) else "🔲"
+            line = f"{status} **{t['name']}**"
+            if t.get("description"):
+                line += f"\n   ↳ {t['description'][:80]}"
+            if t.get("url"):
+                line += f"\n   🔗 [Open]({t['url']})"
+            cal_lines.append(line)
+        if cal_lines:
+            source_label = user["source"].title()
+            embed.add_field(
+                name=f"📅 {source_label} — Today",
+                value="\n\n".join(cal_lines),
+                inline=False,
+            )
+    elif not ok:
+        embed.add_field(
+            name="📅 Calendar",
+            value=f"⚠️ Could not fetch calendar tasks: `{err}`",
+            inline=False,
+        )
+
+    # ── Manual tasks ─────────────────────────────────────────────────────────
+    manual_tasks = db.get_manual_tasks(interaction.user.id, include_done=show_done)
+    if manual_tasks:
+        man_lines = []
+        for t in manual_tasks:
+            status = "✅" if t["done"] else "🔲"
+            due = t["due_date"].strftime("%b %-d") if t.get("due_date") else "No due date"
+            line = f"{status} **{t['name']}**  `{due}`"
+            if t.get("description"):
+                line += f"\n   ↳ {t['description'][:80]}"
+            man_lines.append(line)
+        embed.add_field(
+            name="📝 Manual Tasks",
+            value="\n\n".join(man_lines),
+            inline=False,
+        )
+
+    if not embed.fields:
+        await interaction.followup.send("📭 No tasks found for today.", ephemeral=True)
+        return
 
     await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -494,7 +546,7 @@ async def help_cmd(interaction: discord.Interaction):
         ("/tasks [date]", "Show your tasks for today or a date (YYYY-MM-DD)"),
         ("/complete <task>", "Mark a task done (calendar or manual)"),
         ("/add <name> [due] [description]", "Add a manual task (not from calendar)"),
-        ("/mytasks [show_done]", "List all your manual tasks"),
+        ("/mytasks [show_done]", "List your manual tasks + today's calendar tasks"),
         ("/delete <task>", "Delete a manual task"),
         ("/reminder <task> <datetime>", "Set a reminder (YYYY-MM-DD HH:MM)"),
         ("/reminders", "List your pending reminders"),
