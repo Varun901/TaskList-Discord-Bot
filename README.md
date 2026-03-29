@@ -1,6 +1,6 @@
-# Discord Task Bot
+# TaskList — Discord Task Bot
 
-## Add TaskList Bot to Your Server
+## Add TaskList to Your Server
 
 Click the link below to add the bot to any Discord server you manage:
 
@@ -9,10 +9,10 @@ Click the link below to add the bot to any Discord server you manage:
 > The bot is hosted and maintained. No setup required on your end —
 > just add it to your server and each member runs `/setup` to link
 > their own calendar.
-> 
+
 ### Complete Setup & User Guide
 
-> Fetch tasks from Google Calendar or Notion • Daily digests • Reminders • Manual tasks • Nudge teammates
+> Fetch tasks from Google Calendar or Notion • Morning digests • End-of-day check-ins • Reminders • Manual tasks • Nudge teammates
 
 ---
 
@@ -27,20 +27,22 @@ Click the link below to add the bot to any Discord server you manage:
 7. [Adding Tasks Manually](#7-adding-tasks-manually)
 8. [Command Reference](#8-command-reference)
 9. [The /nudge Command](#9-the-nudge-command)
-10. [Troubleshooting](#10-troubleshooting)
-11. [FAQ](#11-frequently-asked-questions)
+10. [The /dailyreminder Command](#10-the-dailyreminder-command)
+11. [Troubleshooting](#11-troubleshooting)
+12. [FAQ](#12-frequently-asked-questions)
 
 ---
 
 ## 1. What Is This Bot?
 
-The Discord Task Bot connects each member of your Discord server to their own Google Calendar or Notion database. Every morning the bot automatically posts a personalised task digest in the channel of their choice. Members can mark tasks complete, set reminders, add manual tasks, and even nudge each other to stay on track.
+TaskList connects each member of your Discord server to their own Google Calendar or Notion database. Every morning the bot automatically posts a personalised task digest in the channel of their choice. At the end of the day, an optional check-in shows every task still not marked as complete. Members can mark tasks done, set reminders, add manual tasks, and even nudge each other to stay on track.
 
 **Key highlights:**
 
 - **Per-user calendars** — each person links their own source, completely separate from everyone else
 - Supports **Google Calendar** (public iCal) and **Notion** databases
-- **Daily digest** posted automatically at a configurable time
+- **Morning digest** posted automatically at a configurable time
+- **End-of-day check-in** — an optional second daily message showing incomplete tasks
 - **Manual tasks** — add tasks directly in Discord alongside your calendar events
 - **Reminders** with snooze support
 - **/nudge** — publicly remind a teammate to complete their tasks
@@ -163,7 +165,7 @@ DATABASE_PATH=taskbot.db
 | Variable | Default | Description |
 |---|---|---|
 | `DISCORD_BOT_TOKEN` | *(required)* | Bot token from the Developer Portal |
-| `DAILY_POST_HOUR` | `8` | Hour to post daily digests (24-hour, 0–23) |
+| `DAILY_POST_HOUR` | `8` | Hour to post morning digests (24-hour, 0–23) |
 | `DAILY_POST_MINUTE` | `0` | Minute to post (0–59) |
 | `TIMEZONE` | `America/Toronto` | Your server's timezone ([full list](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)) |
 | `DATABASE_PATH` | `taskbot.db` | Path to the SQLite file (created automatically) |
@@ -191,7 +193,7 @@ You should see:
 
 ```
 INFO  TaskBot: Logged in as Task Bot#1234 (ID: 123456789)
-INFO  TaskBot: Slash commands synced.
+INFO  TaskBot: Slash commands synced globally.
 INFO  TaskBot: Daily digest scheduled for 08:00 America/Toronto
 ```
 
@@ -455,24 +457,32 @@ Every user in the server sets up independently. Their data is completely private
 
 ### Connecting Google Calendar
 
+#### Step 1 — Make your calendar public
+
 1. Open Google Calendar at [calendar.google.com](https://calendar.google.com).
 2. In the left sidebar, hover over the calendar you want to use and click the **three-dot menu (⋮)**.
 3. Select **"Settings and sharing"**.
-4. Under **"Access permissions for events"**, tick **"Make available to public"**. Click OK on the warning.
-5. Scroll down to **"Integrate calendar"**. Copy the **Calendar ID** — it looks like:
-   ```
-   yourname@gmail.com
-   ```
-   or for a shared/secondary calendar:
-   ```
-   abc123xyz@group.calendar.google.com
-   ```
-6. In Discord, run:
-   ```
-   /setup source:Google Calendar calendar_id:<paste your ID here> channel:#your-channel
-   ```
+4. Under **"Access permissions for events"**, tick **"Make available to public"** and click OK on the confirmation.
 
-> **What gets fetched?** The bot reads events from your Google Calendar's public iCal feed. Google Tasks are **not** included — only Calendar Events appear. The calendar must remain public for the bot to access it.
+> The bot reads your calendar through Google's public iCal feed. The calendar must stay public for the bot to fetch tasks. You can make it public without sharing the link — only someone with the exact Calendar ID can access it.
+
+#### Step 2 — Copy your Calendar ID
+
+1. On the same Settings page, scroll down to **"Integrate calendar"**.
+2. Copy the **Calendar ID** — it looks like one of these:
+
+```
+yourname@gmail.com
+abc123xyz@group.calendar.google.com
+```
+
+> For your **primary** Google calendar, the Calendar ID is usually just your Gmail address. For secondary or shared calendars it is a long string ending in `@group.calendar.google.com`.
+
+#### Step 3 — Run /setup in Discord
+
+```
+/setup source:google calendar_id:<paste your ID here> channel:#your-channel
+```
 
 ---
 
@@ -480,24 +490,32 @@ Every user in the server sets up independently. Their data is completely private
 
 Notion requires two things: an **integration token** and a **database ID**.
 
-#### Create a Notion Integration
+#### Step 1 — Create a Notion Integration
 
 1. Go to [notion.so/my-integrations](https://www.notion.so/my-integrations) and click **"+ New integration"**.
 2. Name it (e.g. `Discord Task Bot`), select your workspace, and click **Submit**.
 3. Copy the **Internal Integration Token** — it starts with `secret_`.
 4. Set the capabilities to **Read content only** — the bot never writes to Notion.
 
-#### Share Your Database With the Integration
+#### Step 2 — Share your database with the integration
 
-1. Open the Notion database you want to use.
-2. Click **"..."** in the top-right corner → **"Connections"** → find and add your integration.
-3. Copy the **Database ID** from the URL bar. The URL looks like:
-   ```
-   https://notion.so/yourworkspace/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX?v=...
-   ```
-   The 32-character string between the last `/` and the `?` is your Database ID.
+1. Open the Notion database you want to use (it must be a **database**, not a regular page).
+2. Click **"..."** in the top-right corner → **"Connections"** → find and add your integration by name.
+3. The integration now has read access to that database.
 
-#### Database Property Requirements
+#### Step 3 — Copy your Database ID
+
+The Database ID is in the URL when you have the database open in Notion:
+
+```
+https://notion.so/yourworkspace/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX?v=...
+```
+
+The **32-character string** between the last `/` and the `?` is your Database ID. Copy that string.
+
+> If your URL has no `?v=` section, copy everything after the last `/`.
+
+#### Step 4 — Check your database properties
 
 Your Notion database must have **at least one** of these property names for date filtering to work:
 
@@ -510,10 +528,10 @@ Your Notion database must have **at least one** of these property names for date
 
 The bot also looks for a `Description`, `Notes`, or `Body` rich-text property to show task descriptions.
 
-#### Run the Setup Command
+#### Step 5 — Run /setup in Discord
 
 ```
-/setup source:Notion calendar_id:<database-id> channel:#your-channel notion_token:<secret_...>
+/setup source:notion calendar_id:<database-id> channel:#your-channel notion_token:<secret_...>
 ```
 
 ---
@@ -538,7 +556,7 @@ All parameters except `name` are optional. If you omit `due`, the task has no du
 /mytasks
 ```
 
-Shows all pending manual tasks. Add `show_done:True` to include completed ones.
+Shows all pending manual tasks alongside today's calendar tasks. Add `show_done:True` to include completed ones.
 
 ### Completing a Task
 
@@ -560,7 +578,7 @@ Permanently removes the task from the database.
 
 ## 8. Command Reference
 
-> All commands are Discord slash commands. Type `/` in the message box to see them.
+> All commands are Discord slash commands. Type `/` in the message box to see them, or run `!help` for an immediate list.
 > Responses marked *(private)* are ephemeral — only visible to you.
 
 ### Setup & Configuration
@@ -568,7 +586,7 @@ Permanently removes the task from the database.
 | Command | Description |
 |---|---|
 | `/setup` | Link your Google Calendar or Notion database. Choose the source from the dropdown. *(private)* |
-| `/status` | Show your current configuration, streak, and stats. *(private)* |
+| `/status` | Show your current configuration, EOD reminder time, streak, and stats. *(private)* |
 | `/unlink` | Remove all your data from the bot. *(private)* |
 
 ### Viewing Tasks
@@ -576,7 +594,7 @@ Permanently removes the task from the database.
 | Command | Description |
 |---|---|
 | `/tasks [date]` | Show your tasks for today or a specific date (`YYYY-MM-DD`). *(private)* |
-| `/mytasks [show_done]` | List all your manual (non-calendar) tasks. *(private)* |
+| `/mytasks [show_done]` | List all your manual and today's calendar tasks. *(private)* |
 | `/weekly` | Weekly summary with per-day chart, streak, and upcoming tasks. *(private)* |
 
 ### Managing Tasks
@@ -587,14 +605,15 @@ Permanently removes the task from the database.
 | `/add <name> [due] [description]` | Add a manual task directly in Discord. *(private)* |
 | `/delete <task>` | Delete a manual task. *(private)* |
 
-### Reminders
+### Reminders & Check-ins
 
 | Command | Description |
 |---|---|
-| `/reminder <task> <datetime>` | Set a reminder. Format: `YYYY-MM-DD HH:MM` (24-hour). *(private)* |
-| `/reminders` | List all your pending reminders. *(private)* |
+| `/reminder <task> <datetime>` | Set a one-off reminder for a specific task. Format: `YYYY-MM-DD HH:MM` (24-hour). *(private)* |
+| `/reminders` | List all your pending one-off reminders. *(private)* |
 | `/snooze <task> [minutes]` | Snooze a reminder by N minutes (default: 30). *(private)* |
 | `/cancelreminder <task>` | Cancel a pending reminder. *(private)* |
+| `/dailyreminder [time] [enabled]` | Set or toggle your daily end-of-day incomplete-task check-in. *(private)* |
 
 ### Social
 
@@ -630,13 +649,64 @@ The nudge embed shows:
 
 ---
 
-## 10. Troubleshooting
+## 10. The /dailyreminder Command
+
+The `/dailyreminder` command sets a personal end-of-day check-in that fires at a time you choose. When it fires, the bot sends you a private message in your digest channel listing every task that hasn't been marked as complete that day.
+
+### Enabling the check-in
+
+```
+/dailyreminder enabled:True time:21:00
+```
+
+Use 24-hour format for the time. `21:00` means 9 pm in your server's configured timezone.
+
+### What the check-in looks like
+
+If you have incomplete tasks, the bot sends:
+
+> 🌙 **End-of-Day Check-in**
+> Hey @you, have you completed all your tasks for today?
+> Here are the tasks still not marked as complete:
+>
+> 🔲 **Write project report**
+> 🔲 **Reply to emails** `Jun 15`
+>
+> *Quick actions: `/complete <task>` — mark a task done | `/tasks` — view full task list*
+
+If everything is done, you get a celebration message instead:
+
+> 🎉 Great work today! You've completed **all** your tasks for today.
+
+### Changing the time
+
+Run the command again with a new time — it overwrites the previous setting:
+
+```
+/dailyreminder enabled:True time:20:30
+```
+
+### Disabling the check-in
+
+```
+/dailyreminder enabled:False
+```
+
+Your check-in time is remembered — run `/dailyreminder enabled:True time:HH:MM` to re-enable it.
+
+### Checking your current setting
+
+Run `/status` to see your EOD reminder time alongside the rest of your configuration.
+
+---
+
+## 11. Troubleshooting
 
 | Problem | Likely Cause | Fix |
 |---|---|---|
 | Bot won't start: "DISCORD_BOT_TOKEN is not set" | Missing `.env` file or empty token | Create `.env` in the project root and set `DISCORD_BOT_TOKEN` |
 | Bot won't start: hour/minute out of range | Invalid schedule values in `.env` | Set `DAILY_POST_HOUR` to 0–23 and `DAILY_POST_MINUTE` to 0–59 |
-| Commands don't appear in Discord | Slash commands haven't propagated yet | Wait 5–10 minutes after starting the bot for the first time |
+| Commands don't appear in Discord | Slash commands haven't propagated yet | Wait 5–10 minutes after starting the bot for the first time, or use `!help` immediately |
 | systemd service won't start | Wrong paths in service file | Run `journalctl -u taskbot -n 50` and check the error; verify all paths in the `[Service]` section |
 | Google Calendar returns no tasks | Calendar is not set to public | Go to Calendar Settings → Access Permissions → Make available to public |
 | Google Calendar returns wrong tasks | Wrong Calendar ID | Confirm the ID in Google Calendar → Settings and sharing → Integrate calendar |
@@ -644,17 +714,18 @@ The nudge embed shows:
 | Notion returns `404 Not Found` | Wrong Database ID | Copy the 32-character ID from the Notion page URL — not a page inside the database |
 | Notion tasks not showing for a date | Date property name not recognised | Rename your date property to one of: `Date`, `Due`, `Due Date`, or `Deadline` |
 | Daily digest not posting | Bot is offline or wrong channel | Run `sudo systemctl status taskbot` and check the channel in `/status` is accessible |
+| EOD reminder not firing | Bot was offline at reminder time | Keep the bot running 24/7; missed reminders are not backfilled |
 | Reminders not firing | Bot was offline at reminder time | Keep the bot running 24/7 — overdue reminders fire on next startup |
 | Can't see bot commands | Missing `applications.commands` scope | Re-invite the bot using the OAuth2 URL in [Section 3](#3-adding-the-bot-to-discord) |
 | `/setup` says "Could not connect" | Calendar not public / bad Notion token | Follow the setup steps in [Section 6](#6-user-setup--connecting-your-calendar) exactly |
 
 ---
 
-## 11. Frequently Asked Questions
+## 12. Frequently Asked Questions
 
 **Can multiple people use the bot in the same server?**
 
-Yes — that is the core design. Each user who runs `/setup` gets their own independent task list, reminder schedule, and digest channel. There is no limit on the number of users per server.
+Yes — that is the core design. Each user who runs `/setup` gets their own independent task list, reminder schedule, digest channel, and EOD check-in. There is no limit on the number of users per server.
 
 **Can two users share the same digest channel?**
 
@@ -670,7 +741,7 @@ Tokens are stored in the local SQLite database on the Oracle VM. Use a dedicated
 
 **What happens if I run `/setup` again?**
 
-Your configuration is updated in place. Your existing completions, reminders, and manual tasks are preserved. Only your calendar source, ID, channel, and token are updated.
+Your configuration is updated in place. Your existing completions, reminders, manual tasks, and EOD reminder settings are preserved. Only your calendar source, ID, channel, and token are updated.
 
 **How do I change my digest channel?**
 
@@ -684,10 +755,14 @@ Yes — it posts a message confirming there are no tasks scheduled for that day,
 
 Yes. Manual tasks (added with `/add`) appear in `/tasks` alongside your Google Calendar or Notion events. The `/complete` command checks manual tasks first, then calendar events.
 
+**What is the difference between `/reminder` and `/dailyreminder`?**
+
+`/reminder` sets a one-off alert for a specific named task at a specific date and time — like a single alarm. `/dailyreminder` is a recurring daily check-in at the same time every day that automatically shows whichever tasks are still incomplete.
+
 **I only want manual tasks — do I still need a Google Calendar or Notion account?**
 
 You still need to run `/setup` (which requires a calendar source) to register your digest channel. If you don't have a calendar, set up a free Google account, create a calendar, make it public, and use that Calendar ID — you can leave it empty and use only manual tasks.
 
 ---
 
-*Discord Task Bot — built with [discord.py](https://discordpy.readthedocs.io/), [httpx](https://www.python-httpx.org/), and [icalendar](https://icalendar.readthedocs.io/).*
+*TaskList — built with [discord.py](https://discordpy.readthedocs.io/), [httpx](https://www.python-httpx.org/), and [icalendar](https://icalendar.readthedocs.io/).*
