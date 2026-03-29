@@ -268,6 +268,111 @@ class TaskManager:
             except Exception as exc:
                 log.error(f"Digest error for user {user_row['user_id']}: {exc}", exc_info=True)
 
+    # ── End-of-Day Daily Reminder ─────────────────────────────────────────────
+
+    async def post_eod_reminder(self, bot: discord.Client, hour: int, minute: int):
+        """Fire the end-of-day check-in for every user whose reminder is due now."""
+        users = self.db.get_users_due_daily_reminder(hour, minute)
+        today = date.today()
+
+        for user_row in users:
+            try:
+                channel = bot.get_channel(user_row["channel_id"])
+                if not channel:
+                    continue
+                member = channel.guild.get_member(user_row["user_id"])
+                if not member:
+                    try:
+                        member = await channel.guild.fetch_member(user_row["user_id"])
+                    except Exception:
+                        continue
+
+                # ── Fetch today's calendar tasks ──────────────────────────────
+                ok, _, cal_tasks = await fetch_tasks(
+                    user_row["source"],
+                    user_row["calendar_id"],
+                    user_row.get("notion_token"),
+                    today,
+                )
+
+                completed_today = self.db.get_completed_today(user_row["user_id"])
+                completed_lower = [c.lower() for c in completed_today]
+
+                def _is_done(name: str) -> bool:
+                    nl = name.lower()
+                    return any(nl in c or c in nl for c in completed_lower)
+
+                # ── Build pending list ────────────────────────────────────────
+                pending_lines: list = []
+
+                if ok:
+                    for t in cal_tasks:
+                        if not _is_done(t["name"]):
+                            line = f"🔲 **{t['name']}**"
+                            if t.get("description"):
+                                snippet = t["description"][:60]
+                                line += f"\n   ↳ {snippet}{'…' if len(t['description']) > 60 else ''}"
+                            pending_lines.append(line)
+
+                for m in self.db.get_manual_tasks(user_row["user_id"], include_done=False):
+                    if not _is_done(m["name"]):
+                        due = (
+                            f"  `{m['due_date'].strftime('%b %-d')}`"
+                            if m.get("due_date") else ""
+                        )
+                        line = f"🔲 **{m['name']}**{due}"
+                        if m.get("description"):
+                            snippet = m["description"][:60]
+                            line += f"\n   ↳ {snippet}{'…' if len(m['description']) > 60 else ''}"
+                        pending_lines.append(line)
+
+                # ── Build embed ───────────────────────────────────────────────
+                if not pending_lines:
+                    embed = discord.Embed(
+                        title="🌙 End-of-Day Check-in",
+                        description=(
+                            f"🎉 Great work today, {member.display_name}! "
+                            "You've completed **all** your tasks for today."
+                        ),
+                        color=0x57F287,
+                    )
+                else:
+                    embed = discord.Embed(
+                        title="🌙 End-of-Day Check-in",
+                        description=(
+                            f"Hey {member.display_name}, have you completed all your tasks for today?\n"
+                            "Here are the tasks still not marked as complete:"
+                        ),
+                        color=0xFEE75C,
+                    )
+                    # Discord embed field value is capped at 1024 chars — show up to 15 tasks
+                    shown = pending_lines[:15]
+                    overflow = len(pending_lines) - len(shown)
+                    field_value = "\n\n".join(shown)
+                    if overflow:
+                        field_value += f"\n\n_…and {overflow} more — use `/tasks` to see all._"
+                    embed.add_field(
+                        name=f"📋 Pending ({len(pending_lines)})",
+                        value=field_value,
+                        inline=False,
+                    )
+                    embed.add_field(
+                        name="Quick actions",
+                        value="`/complete <task>` — mark a task done\n`/tasks` — view full task list",
+                        inline=False,
+                    )
+
+                embed.set_thumbnail(url=member.display_avatar.url)
+                embed.set_footer(text="Use /dailyreminder to adjust or disable this check-in.")
+                await channel.send(content=member.mention, embed=embed)
+                log.info(f"Fired EOD daily reminder for user {user_row['user_id']}")
+
+            except Exception as exc:
+                log.error(
+                    f"EOD reminder error for user {user_row['user_id']}: {exc}",
+                    exc_info=True,
+                )
+
     # ── Reminder Firing ───────────────────────────────────────────────────────
 
     async def fire_due_reminders(self, bot: discord.Client):

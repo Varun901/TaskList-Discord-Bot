@@ -46,6 +46,8 @@ async def on_ready():
         daily_digest.start()
     if not reminder_loop.is_running():
         reminder_loop.start()
+    if not eod_reminder_loop.is_running():
+        eod_reminder_loop.start()
     log.info(f"Daily digest scheduled for {DAILY_POST_HOUR:02d}:{DAILY_POST_MINUTE:02d} {TIMEZONE}")
 
 
@@ -76,8 +78,16 @@ async def reminder_loop():
     await task_manager.fire_due_reminders(bot)
 
 
+@tasks.loop(minutes=1)
+async def eod_reminder_loop():
+    tz = pytz.timezone(TIMEZONE)
+    now = datetime.now(tz)
+    await task_manager.post_eod_reminder(bot, now.hour, now.minute)
+
+
 @daily_digest.before_loop
 @reminder_loop.before_loop
+@eod_reminder_loop.before_loop
 async def before_loops():
     await bot.wait_until_ready()
 
@@ -445,11 +455,21 @@ async def status(interaction: discord.Interaction):
     total = db.get_total_completed(interaction.user.id)
     manual_pending = len(db.get_manual_tasks(interaction.user.id, include_done=False))
 
+    dr = db.get_daily_reminder(interaction.user.id)
+    if dr and dr["enabled"]:
+        dr_friendly = datetime.strptime(
+            f"{dr['reminder_hour']:02d}:{dr['reminder_minute']:02d}", "%H:%M"
+        ).strftime("%-I:%M %p")
+        dr_value = f"`{dr_friendly} {TIMEZONE}`"
+    else:
+        dr_value = "Off"
+
     embed = discord.Embed(title="⚙️ Your Configuration", color=0x57F287)
     embed.add_field(name="Source", value=user["source"].title(), inline=True)
     embed.add_field(name="Calendar ID", value=f"`{user['calendar_id']}`", inline=True)
     embed.add_field(name="Digest Channel", value=channel.mention if channel else "Unknown", inline=True)
     embed.add_field(name="Daily Post Time", value=f"`{DAILY_POST_HOUR:02d}:{DAILY_POST_MINUTE:02d} {TIMEZONE}`", inline=True)
+    embed.add_field(name="🌙 EOD Reminder", value=dr_value, inline=True)
     embed.add_field(name="🔥 Streak", value=f"{streak} day{'s' if streak != 1 else ''}", inline=True)
     embed.add_field(name="🏆 All-time Completed", value=str(total), inline=True)
     embed.add_field(name="📝 Manual Tasks Pending", value=str(manual_pending), inline=True)
@@ -531,6 +551,71 @@ async def nudge(interaction: discord.Interaction, member: discord.Member, messag
     await interaction.followup.send(content=f"{member.mention}", embed=embed)
 
 
+# ─── /dailyreminder ───────────────────────────────────────────────────────────
+
+@bot.tree.command(
+    name="dailyreminder",
+    description="Set a daily end-of-day check-in showing your incomplete tasks.",
+)
+@app_commands.describe(
+    enabled="Turn the reminder on or off",
+    time="Time to send it — 24-hour HH:MM format, e.g. 21:00 for 9 pm",
+)
+async def daily_reminder_cmd(
+    interaction: discord.Interaction,
+    enabled: bool = True,
+    time: Optional[str] = None,
+):
+    await interaction.response.defer(ephemeral=True)
+    if not _require_setup(interaction.user.id):
+        await interaction.followup.send("❌ Run `/setup` first.", ephemeral=True)
+        return
+
+    # ── Disable path ──────────────────────────────────────────────────────────
+    if not enabled:
+        db.disable_daily_reminder(interaction.user.id)
+        await interaction.followup.send(
+            "🔕 Daily end-of-day reminder **disabled**.\n"
+            "Run `/dailyreminder enabled:True time:HH:MM` to turn it back on.",
+            ephemeral=True,
+        )
+        return
+
+    # ── Enable path ───────────────────────────────────────────────────────────
+    if not time:
+        await interaction.followup.send(
+            "❌ Please provide a `time` — e.g. `21:00` for 9 pm.",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        parts = time.strip().split(":")
+        if len(parts) != 2:
+            raise ValueError
+        hour, minute = int(parts[0]), int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+    except ValueError:
+        await interaction.followup.send(
+            "❌ Invalid time — use `HH:MM` in 24-hour format, e.g. `21:00` for 9 pm.",
+            ephemeral=True,
+        )
+        return
+
+    db.set_daily_reminder(interaction.user.id, hour, minute)
+
+    friendly = datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M").strftime("%-I:%M %p")
+    await interaction.followup.send(
+        f"🌙 Daily end-of-day reminder set for **{friendly} {TIMEZONE}**.\n"
+        "Each day at this time you'll receive a check-in listing any tasks "
+        "you haven't yet marked as complete.\n\n"
+        "To change the time, run this command again with a new time.\n"
+        "To disable, run `/dailyreminder enabled:False`.",
+        ephemeral=True,
+    )
+
+
 # ─── /unlink ──────────────────────────────────────────────────────────────────
 
 @bot.tree.command(name="unlink", description="Remove your calendar integration and all data.")
@@ -564,6 +649,7 @@ async def help_cmd(interaction: discord.Interaction):
         ("/snooze <task> [minutes]", "Snooze a reminder (default 30 min)"),
         ("/cancelreminder <task>", "Cancel a pending reminder"),
         ("/nudge @member [message]", "Publicly remind someone else to complete their tasks"),
+        ("/dailyreminder [time] [enabled]", "Set or toggle a daily end-of-day incomplete-task check-in"),
         ("/weekly", "Weekly summary, streak, and upcoming tasks"),
         ("/status", "Show your configuration and stats"),
         ("/unlink", "Remove all your data"),
@@ -601,6 +687,7 @@ async def prefix_help(ctx: commands.Context):
         ("/snooze <task> [minutes]", "Snooze a reminder (default 30 min)"),
         ("/cancelreminder <task>", "Cancel a pending reminder"),
         ("/nudge @member [message]", "Publicly remind someone else to complete their tasks"),
+        ("/dailyreminder [time] [enabled]", "Set or toggle a daily end-of-day incomplete-task check-in"),
         ("/weekly", "Weekly summary, streak, and upcoming tasks"),
         ("/status", "Show your configuration and stats"),
         ("/unlink", "Remove all your data"),

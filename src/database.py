@@ -66,6 +66,14 @@ class Database:
                     snoozed     INTEGER DEFAULT 0,
                     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS daily_reminders (
+                    user_id         INTEGER PRIMARY KEY,
+                    reminder_hour   INTEGER NOT NULL,
+                    reminder_minute INTEGER NOT NULL,
+                    enabled         INTEGER DEFAULT 1,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                );
             """)
         log.info("Database initialised.")
 
@@ -239,6 +247,50 @@ class Database:
                 return None
             conn.execute("DELETE FROM reminders WHERE id=?", (row["id"],))
             return row["task_name"]
+
+    # ── Daily Reminders ───────────────────────────────────────────────────────
+
+    def set_daily_reminder(self, user_id: int, hour: int, minute: int):
+        """Enable (or update) the end-of-day daily reminder for a user."""
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO daily_reminders (user_id, reminder_hour, reminder_minute, enabled)
+                   VALUES (?, ?, ?, 1)
+                   ON CONFLICT(user_id) DO UPDATE SET
+                       reminder_hour=excluded.reminder_hour,
+                       reminder_minute=excluded.reminder_minute,
+                       enabled=1""",
+                (user_id, hour, minute),
+            )
+
+    def disable_daily_reminder(self, user_id: int):
+        """Disable the end-of-day daily reminder for a user."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE daily_reminders SET enabled=0 WHERE user_id=?",
+                (user_id,),
+            )
+
+    def get_daily_reminder(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Return the daily reminder row for a user, or None if not set."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM daily_reminders WHERE user_id=?", (user_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_users_due_daily_reminder(self, hour: int, minute: int) -> List[Dict[str, Any]]:
+        """Return all users whose enabled daily reminder fires at hour:minute."""
+        with self._connect() as conn:
+            return [dict(r) for r in conn.execute(
+                """SELECT dr.user_id, u.source, u.calendar_id, u.channel_id, u.notion_token
+                   FROM daily_reminders dr
+                   JOIN users u ON u.user_id = dr.user_id
+                   WHERE dr.enabled=1
+                     AND dr.reminder_hour=?
+                     AND dr.reminder_minute=?""",
+                (hour, minute),
+            ).fetchall()]
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 
