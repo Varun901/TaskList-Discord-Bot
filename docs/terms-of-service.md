@@ -104,4 +104,4 @@ These Terms are governed by and construed in accordance with applicable law. Any
 
 ## 13. Contact
 
-If you have questions about these Terms, please contact: **[CONTACT EMAIL]**
+If you have questions about these Terms, please contact: jain.varun9801@gmail.com

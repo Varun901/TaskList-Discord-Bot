@@ -104,4 +104,4 @@ We may update this Privacy Policy from time to time. The "Last updated" date at 
 
 ## 9. Contact
 
-If you have any questions or requests regarding this Privacy Policy, please contact: **[CONTACT EMAIL]**
+If you have any questions or requests regarding this Privacy Policy, please contact: jain.varun9801@gmail.com
