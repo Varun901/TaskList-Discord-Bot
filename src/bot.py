@@ -40,6 +40,16 @@ async def on_ready():
     log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
     await bot.tree.sync()
     log.info("Slash commands synced globally.")
+    # Also sync to every guild the bot is already in so commands are
+    # available instantly rather than waiting up to 1 hour for global
+    # propagation.
+    for guild in bot.guilds:
+        try:
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
+            log.info(f"Slash commands synced to guild: {guild.name} ({guild.id})")
+        except Exception as exc:
+            log.warning(f"Could not sync commands to guild {guild.id}: {exc}")
     # Guard against on_ready firing again on reconnect — starting a loop that
     # is already running raises a RuntimeError.
     if not daily_digest.is_running():
