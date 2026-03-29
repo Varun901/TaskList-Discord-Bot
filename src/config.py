@@ -1,8 +1,12 @@
 from __future__ import annotations
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Resolve .env relative to this file (src/config.py → project root/.env) so the
+# bot finds the token regardless of the current working directory.  This is
+# important when systemd's WorkingDirectory differs from the project root.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ── Discord ────────────────────────────────────────────────────────────────────
 _raw_token = os.getenv("DISCORD_BOT_TOKEN", "")
