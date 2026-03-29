@@ -64,12 +64,52 @@ async def on_ready():
 @bot.event
 async def on_guild_join(guild: discord.Guild):
     """Sync slash commands instantly when the bot is added to a new server."""
+    import asyncio
+    for attempt in range(1, 4):
+        try:
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
+            log.info(f"Slash commands synced to new guild: {guild.name} ({guild.id})")
+            return
+        except discord.HTTPException as exc:
+            if exc.status == 429:  # rate-limited — back off and retry
+                retry_after = exc.retry_after if hasattr(exc, "retry_after") else attempt * 5
+                log.warning(
+                    f"Rate-limited syncing to guild {guild.id} (attempt {attempt}/3). "
+                    f"Retrying in {retry_after:.1f}s."
+                )
+                await asyncio.sleep(retry_after)
+            else:
+                log.warning(f"Could not sync commands to guild {guild.id} (attempt {attempt}/3): {exc}")
+                break
+        except Exception as exc:
+            log.warning(f"Could not sync commands to guild {guild.id} (attempt {attempt}/3): {exc}")
+            break
+    log.error(
+        f"Failed to sync commands to guild {guild.name} ({guild.id}) after retries. "
+        "Global commands will propagate within ~1 hour."
+    )
+
+
+# ─── Global App Command Error Handler ────────────────────────────────────────
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Catch-all handler so every interaction gets a response, preventing
+    'The application did not respond' from appearing in Discord."""
+    log.error(
+        f"Unhandled app command error in /{interaction.command.name if interaction.command else '?'} "
+        f"by {interaction.user} (guild {interaction.guild_id}): {error}",
+        exc_info=error,
+    )
+    msg = "❌ An unexpected error occurred. Please try again in a moment."
     try:
-        bot.tree.copy_global_to(guild=guild)
-        await bot.tree.sync(guild=guild)
-        log.info(f"Slash commands synced to new guild: {guild.name} ({guild.id})")
-    except Exception as exc:
-        log.warning(f"Could not sync commands to guild {guild.id}: {exc}")
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        pass  # Nothing more we can do if Discord itself is unreachable
 
 
 # ─── Background Tasks ─────────────────────────────────────────────────────────
@@ -142,30 +182,37 @@ async def setup(
     notion_token: Optional[str] = None,
 ):
     await interaction.response.defer(ephemeral=True)
-    # source is constrained to "google" | "notion" by the Literal type,
-    # which Discord renders as a dropdown — no free-text validation needed.
-    if source == "notion" and not notion_token:
-        await interaction.followup.send("❌ `notion_token` is required for Notion.", ephemeral=True)
-        return
+    try:
+        # source is constrained to "google" | "notion" by the Literal type,
+        # which Discord renders as a dropdown — no free-text validation needed.
+        if source == "notion" and not notion_token:
+            await interaction.followup.send("❌ `notion_token` is required for Notion.", ephemeral=True)
+            return
 
-    ok, msg = await task_manager.validate_source(source, calendar_id, notion_token)
-    if not ok:
-        await interaction.followup.send(f"❌ Could not connect: {msg}", ephemeral=True)
-        return
+        ok, msg = await task_manager.validate_source(source, calendar_id, notion_token)
+        if not ok:
+            await interaction.followup.send(f"❌ Could not connect: {msg}", ephemeral=True)
+            return
 
-    db.upsert_user(
-        user_id=interaction.user.id,
-        guild_id=interaction.guild_id,
-        source=source,
-        calendar_id=calendar_id,
-        channel_id=channel.id,
-        notion_token=notion_token,
-    )
-    await interaction.followup.send(
-        f"✅ Setup complete! Your **{source.title()}** tasks will be posted to {channel.mention} daily at "
-        f"`{DAILY_POST_HOUR:02d}:{DAILY_POST_MINUTE:02d} {TIMEZONE}`.",
-        ephemeral=True,
-    )
+        db.upsert_user(
+            user_id=interaction.user.id,
+            guild_id=interaction.guild_id,
+            source=source,
+            calendar_id=calendar_id,
+            channel_id=channel.id,
+            notion_token=notion_token,
+        )
+        await interaction.followup.send(
+            f"✅ Setup complete! Your **{source.title()}** tasks will be posted to {channel.mention} daily at "
+            f"`{DAILY_POST_HOUR:02d}:{DAILY_POST_MINUTE:02d} {TIMEZONE}`.",
+            ephemeral=True,
+        )
+    except Exception as exc:
+        log.error(f"Error in /setup for user {interaction.user.id}: {exc}", exc_info=True)
+        await interaction.followup.send(
+            "❌ An unexpected error occurred during setup. Please try again.",
+            ephemeral=True,
+        )
 
 
 # ─── /tasks ───────────────────────────────────────────────────────────────────
