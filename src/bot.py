@@ -39,7 +39,7 @@ task_manager = TaskManager(db)
 async def on_ready():
     log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
     await bot.tree.sync()
-    log.info("Slash commands synced.")
+    log.info("Slash commands synced globally.")
     # Guard against on_ready firing again on reconnect — starting a loop that
     # is already running raises a RuntimeError.
     if not daily_digest.is_running():
@@ -47,6 +47,17 @@ async def on_ready():
     if not reminder_loop.is_running():
         reminder_loop.start()
     log.info(f"Daily digest scheduled for {DAILY_POST_HOUR:02d}:{DAILY_POST_MINUTE:02d} {TIMEZONE}")
+
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    """Sync slash commands instantly when the bot is added to a new server."""
+    try:
+        bot.tree.copy_global_to(guild=guild)
+        await bot.tree.sync(guild=guild)
+        log.info(f"Slash commands synced to new guild: {guild.name} ({guild.id})")
+    except Exception as exc:
+        log.warning(f"Could not sync commands to guild {guild.id}: {exc}")
 
 
 # ─── Background Tasks ─────────────────────────────────────────────────────────
@@ -563,6 +574,46 @@ async def help_cmd(interaction: discord.Interaction):
 
     embed.set_footer(text=f"Daily digest posts at {DAILY_POST_HOUR:02d}:{DAILY_POST_MINUTE:02d} {TIMEZONE}")
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ─── Prefix !help (instant fallback before slash commands propagate) ──────────
+
+@bot.command(name="help")
+async def prefix_help(ctx: commands.Context):
+    """Show the full command list via the !help prefix command."""
+    embed = discord.Embed(
+        title="📅 TaskList Bot — Command Reference",
+        description=(
+            "**Get started:** `/setup` links your Google Calendar or Notion database.\n"
+            "All `/` slash commands are listed below. Responses are private — only you see them."
+        ),
+        color=0x5865F2,
+    )
+    commands_info = [
+        ("/setup", "Link your Google Calendar or Notion database"),
+        ("/tasks [date]", "Show your tasks for today or a date (YYYY-MM-DD)"),
+        ("/complete <task>", "Mark a task done (calendar or manual)"),
+        ("/add <name> [due] [description]", "Add a manual task (not from calendar)"),
+        ("/mytasks [show_done]", "List your manual tasks + today's calendar tasks"),
+        ("/delete <task>", "Delete a manual task"),
+        ("/reminder <task> <datetime>", "Set a reminder (YYYY-MM-DD HH:MM)"),
+        ("/reminders", "List your pending reminders"),
+        ("/snooze <task> [minutes]", "Snooze a reminder (default 30 min)"),
+        ("/cancelreminder <task>", "Cancel a pending reminder"),
+        ("/nudge @member [message]", "Publicly remind someone else to complete their tasks"),
+        ("/weekly", "Weekly summary, streak, and upcoming tasks"),
+        ("/status", "Show your configuration and stats"),
+        ("/unlink", "Remove all your data"),
+        ("/help", "Show this message"),
+    ]
+    for name, desc in commands_info:
+        embed.add_field(name=f"`{name}`", value=desc, inline=False)
+
+    embed.set_footer(
+        text=f"Daily digest posts at {DAILY_POST_HOUR:02d}:{DAILY_POST_MINUTE:02d} {TIMEZONE} • "
+             "Slash commands also available — type / in the message box"
+    )
+    await ctx.send(embed=embed)
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
