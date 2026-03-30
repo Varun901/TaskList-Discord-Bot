@@ -38,20 +38,9 @@ task_manager = TaskManager(db)
 @bot.event
 async def on_ready():
     log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    await bot.tree.sync()
-    log.info("Slash commands synced globally.")
-    # Also sync to every guild the bot is already in so commands are
-    # available instantly rather than waiting up to 1 hour for global
-    # propagation.
-    for guild in bot.guilds:
-        try:
-            bot.tree.copy_global_to(guild=guild)
-            await bot.tree.sync(guild=guild)
-            log.info(f"Slash commands synced to guild: {guild.name} ({guild.id})")
-        except Exception as exc:
-            log.warning(f"Could not sync commands to guild {guild.id}: {exc}")
-    # Guard against on_ready firing again on reconnect — starting a loop that
-    # is already running raises a RuntimeError.
+
+    # Start background loops first — command syncing must never block or crash
+    # before these start, otherwise the daily digest is silently lost.
     if not daily_digest.is_running():
         daily_digest.start()
     if not reminder_loop.is_running():
@@ -59,6 +48,23 @@ async def on_ready():
     if not eod_reminder_loop.is_running():
         eod_reminder_loop.start()
     log.info(f"Daily digest scheduled for {DAILY_POST_HOUR:02d}:{DAILY_POST_MINUTE:02d} {TIMEZONE}")
+
+    # Sync slash commands — wrapped so rate-limits or API errors don't crash
+    # on_ready and leave the loops un-started.
+    try:
+        await bot.tree.sync()
+        log.info("Slash commands synced globally.")
+    except Exception as exc:
+        log.warning(f"Global slash command sync failed: {exc}")
+
+    # Also sync to every guild for instant availability (skips ~1h propagation).
+    for guild in bot.guilds:
+        try:
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
+            log.info(f"Slash commands synced to guild: {guild.name} ({guild.id})")
+        except Exception as exc:
+            log.warning(f"Could not sync commands to guild {guild.id}: {exc}")
 
 
 @bot.event
@@ -114,11 +120,22 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 # ─── Background Tasks ─────────────────────────────────────────────────────────
 
+# Track the last date the daily digest was successfully posted so that a late
+# bot start or a skipped loop tick (reconnect, asyncio delay, etc.) doesn't
+# silently drop the morning message.  The digest fires as soon as the clock
+# reaches DAILY_POST_HOUR:DAILY_POST_MINUTE on any day it hasn't yet run.
+_last_digest_date: Optional[date] = None
+
+
 @tasks.loop(minutes=1)
 async def daily_digest():
+    global _last_digest_date
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
-    if now.hour == DAILY_POST_HOUR and now.minute == DAILY_POST_MINUTE:
+    today = now.date()
+    past_post_time = (now.hour, now.minute) >= (DAILY_POST_HOUR, DAILY_POST_MINUTE)
+    if past_post_time and _last_digest_date != today:
+        _last_digest_date = today
         log.info("Running daily digest...")
         await task_manager.post_daily_digest(bot)
 
