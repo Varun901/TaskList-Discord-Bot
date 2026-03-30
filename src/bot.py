@@ -38,20 +38,9 @@ task_manager = TaskManager(db)
 @bot.event
 async def on_ready():
     log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    await bot.tree.sync()
-    log.info("Slash commands synced globally.")
-    # Also sync to every guild the bot is already in so commands are
-    # available instantly rather than waiting up to 1 hour for global
-    # propagation.
-    for guild in bot.guilds:
-        try:
-            bot.tree.copy_global_to(guild=guild)
-            await bot.tree.sync(guild=guild)
-            log.info(f"Slash commands synced to guild: {guild.name} ({guild.id})")
-        except Exception as exc:
-            log.warning(f"Could not sync commands to guild {guild.id}: {exc}")
-    # Guard against on_ready firing again on reconnect — starting a loop that
-    # is already running raises a RuntimeError.
+
+    # Start background loops first — command syncing must never block or crash
+    # before these start, otherwise the daily digest is silently lost.
     if not daily_digest.is_running():
         daily_digest.start()
     if not reminder_loop.is_running():
@@ -59,6 +48,23 @@ async def on_ready():
     if not eod_reminder_loop.is_running():
         eod_reminder_loop.start()
     log.info(f"Daily digest scheduled for {DAILY_POST_HOUR:02d}:{DAILY_POST_MINUTE:02d} {TIMEZONE}")
+
+    # Sync slash commands — wrapped so rate-limits or API errors don't crash
+    # on_ready and leave the loops un-started.
+    try:
+        await bot.tree.sync()
+        log.info("Slash commands synced globally.")
+    except Exception as exc:
+        log.warning(f"Global slash command sync failed: {exc}")
+
+    # Also sync to every guild for instant availability (skips ~1h propagation).
+    for guild in bot.guilds:
+        try:
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
+            log.info(f"Slash commands synced to guild: {guild.name} ({guild.id})")
+        except Exception as exc:
+            log.warning(f"Could not sync commands to guild {guild.id}: {exc}")
 
 
 @bot.event
