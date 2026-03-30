@@ -246,17 +246,41 @@ class TaskManager:
     async def post_daily_digest(self, bot: discord.Client):
         users = self.db.get_all_users()
         today = date.today()
+        log.info(f"Daily digest: found {len(users)} registered user(s).")
 
         for user_row in users:
+            uid = user_row["user_id"]
             try:
+                # get_channel() only hits the local cache; fall back to an API
+                # call so the digest isn't silently dropped for uncached channels.
                 channel = bot.get_channel(user_row["channel_id"])
                 if not channel:
-                    continue
-                member = channel.guild.get_member(user_row["user_id"])
-                if not member:
+                    log.warning(
+                        f"Digest: channel {user_row['channel_id']} not in cache for user "
+                        f"{uid} — attempting fetch_channel()."
+                    )
                     try:
-                        member = await channel.guild.fetch_member(user_row["user_id"])
-                    except Exception:
+                        channel = await bot.fetch_channel(user_row["channel_id"])
+                    except Exception as exc:
+                        log.error(
+                            f"Digest: could not fetch channel {user_row['channel_id']} "
+                            f"for user {uid}: {exc}"
+                        )
+                        continue
+
+                member = channel.guild.get_member(uid)
+                if not member:
+                    log.warning(
+                        f"Digest: member {uid} not in cache for guild "
+                        f"{channel.guild.id} — attempting fetch_member()."
+                    )
+                    try:
+                        member = await channel.guild.fetch_member(uid)
+                    except Exception as exc:
+                        log.error(
+                            f"Digest: could not fetch member {uid} in guild "
+                            f"{channel.guild.id}: {exc}"
+                        )
                         continue
 
                 embed = await self.build_task_embed(member, user_row, today)
@@ -264,9 +288,9 @@ class TaskManager:
                     content=f"🌅 Good morning {member.mention}! Here are your tasks for today:",
                     embed=embed,
                 )
-                log.info(f"Posted digest for user {user_row['user_id']}")
+                log.info(f"Posted digest for user {uid} in channel {channel.id}.")
             except Exception as exc:
-                log.error(f"Digest error for user {user_row['user_id']}: {exc}", exc_info=True)
+                log.error(f"Digest error for user {uid}: {exc}", exc_info=True)
 
     # ── End-of-Day Daily Reminder ─────────────────────────────────────────────
 
