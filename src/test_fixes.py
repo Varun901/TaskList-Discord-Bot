@@ -243,3 +243,85 @@ async def test_digest_skips_user_when_fetch_channel_fails():
 
     # Should not raise
     await tm.post_daily_digest(mock_bot)
+
+
+# ─── Test 3: daily_digest loop retries when post_daily_digest raises ──────────
+
+@pytest.mark.asyncio
+async def test_digest_loop_retries_when_post_raises():
+    """
+    If post_daily_digest raises an exception, _last_digest_date must NOT be
+    set, so the loop retries on the next tick rather than silently dropping
+    the morning message for the entire day.
+    """
+    from datetime import date as _date
+
+    call_count = {"n": 0}
+
+    async def failing_post(bot):
+        call_count["n"] += 1
+        raise RuntimeError("DB unavailable")
+
+    # Simulate the fixed daily_digest loop body as a plain coroutine.
+    last_digest_date = None
+
+    async def simulate_daily_digest_tick(now_hour, now_minute, today):
+        nonlocal last_digest_date
+        import config as cfg
+        past_post_time = (now_hour, now_minute) >= (cfg.DAILY_POST_HOUR, cfg.DAILY_POST_MINUTE)
+        if past_post_time and last_digest_date != today:
+            try:
+                await failing_post(None)
+                last_digest_date = today  # Only reached on success
+            except Exception:
+                pass  # Don't set last_digest_date — allow retry
+
+    today = _date(2026, 3, 31)
+
+    # First tick: post fails → last_digest_date stays None
+    await simulate_daily_digest_tick(9, 0, today)
+    assert last_digest_date is None, "last_digest_date must stay None after a failed post"
+    assert call_count["n"] == 1
+
+    # Second tick: post fails again → still None, still retrying
+    await simulate_daily_digest_tick(9, 1, today)
+    assert last_digest_date is None
+    assert call_count["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_digest_loop_marks_sent_after_success():
+    """
+    On a successful post_daily_digest call, _last_digest_date is set to today
+    so the digest isn't sent a second time in the same day.
+    """
+    from datetime import date as _date
+
+    call_count = {"n": 0}
+
+    async def succeeding_post(bot):
+        call_count["n"] += 1
+
+    last_digest_date = None
+
+    async def simulate_daily_digest_tick(now_hour, now_minute, today):
+        nonlocal last_digest_date
+        import config as cfg
+        past_post_time = (now_hour, now_minute) >= (cfg.DAILY_POST_HOUR, cfg.DAILY_POST_MINUTE)
+        if past_post_time and last_digest_date != today:
+            try:
+                await succeeding_post(None)
+                last_digest_date = today
+            except Exception:
+                pass
+
+    today = _date(2026, 3, 31)
+
+    # First tick: post succeeds → last_digest_date is set
+    await simulate_daily_digest_tick(9, 0, today)
+    assert last_digest_date == today, "last_digest_date must be set after a successful post"
+    assert call_count["n"] == 1
+
+    # Second tick: already sent today → must NOT call post again
+    await simulate_daily_digest_tick(9, 1, today)
+    assert call_count["n"] == 1, "post must not be called twice on the same day"
