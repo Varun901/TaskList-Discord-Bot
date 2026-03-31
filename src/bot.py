@@ -135,9 +135,13 @@ async def daily_digest():
     today = now.date()
     past_post_time = (now.hour, now.minute) >= (DAILY_POST_HOUR, DAILY_POST_MINUTE)
     if past_post_time and _last_digest_date != today:
-        _last_digest_date = today
         log.info("Running daily digest...")
-        await task_manager.post_daily_digest(bot)
+        try:
+            await task_manager.post_daily_digest(bot)
+            _last_digest_date = today  # Only mark sent after a successful run
+        except Exception as exc:
+            # Don't set _last_digest_date — the loop will retry next minute.
+            log.error(f"Daily digest failed, will retry next minute: {exc}", exc_info=True)
 
 
 @tasks.loop(minutes=1)

@@ -15,7 +15,7 @@ BOT_TOKEN: str = _raw_token
 
 # ── Daily Digest Schedule ─────────────────────────────────────────────────────
 # Time (24h) at which the bot posts everyone's daily task list.
-DAILY_POST_HOUR: int = int(os.getenv("DAILY_POST_HOUR", "8"))
+DAILY_POST_HOUR: int = int(os.getenv("DAILY_POST_HOUR", "9"))
 DAILY_POST_MINUTE: int = int(os.getenv("DAILY_POST_MINUTE", "0"))
 
 if not 0 <= DAILY_POST_HOUR <= 23:
