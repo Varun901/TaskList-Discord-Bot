@@ -210,7 +210,7 @@ async def setup(
     interaction: discord.Interaction,
     source: Literal["google", "notion"],
     calendar_id: str,
-    channel: discord.TextChannel,
+    channel: discord.abc.GuildChannel,
     notion_token: Optional[str] = None,
 ):
     await interaction.response.defer(ephemeral=True)
@@ -219,6 +219,15 @@ async def setup(
         # which Discord renders as a dropdown — no free-text validation needed.
         if source == "notion" and not notion_token:
             await interaction.followup.send("❌ `notion_token` is required for Notion.", ephemeral=True)
+            return
+
+        # Accept text channels and announcement (news) channels; reject anything
+        # that can't receive messages (voice, stage, forum, category, etc.).
+        if not isinstance(channel, discord.abc.Messageable):
+            await interaction.followup.send(
+                "❌ Please choose a text or announcement channel — voice, forum, and category channels are not supported.",
+                ephemeral=True,
+            )
             return
 
         ok, msg = await task_manager.validate_source(source, calendar_id, notion_token)
