@@ -1,5 +1,4 @@
 from __future__ import annotations
-from __future__ import annotations
 """
 task_manager.py
 ───────────────
@@ -259,7 +258,7 @@ class TaskManager:
         today = datetime.now(tz).date()
         log.info(f"Daily digest: found {len(users)} registered user(s).")
 
-        failed_uids: list[int] = []
+        failed_uids: List[int] = []
 
         for user_row in users:
             uid = user_row["user_id"]

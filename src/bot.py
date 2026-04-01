@@ -1,5 +1,4 @@
 from __future__ import annotations
-from __future__ import annotations
 """
 bot.py — Discord Task Bot entry point
 """
