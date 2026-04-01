@@ -1,5 +1,4 @@
 from __future__ import annotations
-from __future__ import annotations
 """
 task_manager.py
 ───────────────
@@ -243,13 +242,32 @@ class TaskManager:
 
     # ── Daily Digest ──────────────────────────────────────────────────────────
 
-    async def post_daily_digest(self, bot: discord.Client):
+    async def post_daily_digest(self, bot: discord.Client, sent_today: Optional[set] = None):
+        """Post the daily task digest for every registered user.
+
+        ``sent_today`` is an optional in-memory set of user_ids that have
+        already received today's digest (populated by the caller).  Users in
+        the set are skipped to prevent duplicate sends on retry.  Newly
+        successful deliveries are added to the set by this method.
+
+        Raises ``RuntimeError`` if one or more deliveries failed so the caller
+        can avoid marking the digest as complete and retry next minute.
+        """
         users = self.db.get_all_users()
-        today = date.today()
+        tz = pytz.timezone(TIMEZONE)
+        today = datetime.now(tz).date()
         log.info(f"Daily digest: found {len(users)} registered user(s).")
+
+        failed_uids: List[int] = []
 
         for user_row in users:
             uid = user_row["user_id"]
+
+            # Skip users whose digest was already delivered (retry-safe).
+            if sent_today is not None and uid in sent_today:
+                log.info(f"Digest: user {uid} already received today's digest — skipping.")
+                continue
+
             try:
                 # get_channel() only hits the local cache; fall back to an API
                 # call so the digest isn't silently dropped for uncached channels.
@@ -266,6 +284,7 @@ class TaskManager:
                             f"Digest: could not fetch channel {user_row['channel_id']} "
                             f"for user {uid}: {exc}"
                         )
+                        failed_uids.append(uid)
                         continue
 
                 member = channel.guild.get_member(uid)
@@ -281,6 +300,7 @@ class TaskManager:
                             f"Digest: could not fetch member {uid} in guild "
                             f"{channel.guild.id}: {exc}"
                         )
+                        failed_uids.append(uid)
                         continue
 
                 embed = await self.build_task_embed(member, user_row, today)
@@ -288,9 +308,18 @@ class TaskManager:
                     content=f"🌅 Good morning {member.mention}! Here are your tasks for today:",
                     embed=embed,
                 )
+                if sent_today is not None:
+                    sent_today.add(uid)
                 log.info(f"Posted digest for user {uid} in channel {channel.id}.")
             except Exception as exc:
                 log.error(f"Digest error for user {uid}: {exc}", exc_info=True)
+                failed_uids.append(uid)
+
+        if failed_uids:
+            raise RuntimeError(
+                f"Daily digest delivery failed for {len(failed_uids)} user(s) "
+                f"(user_ids: {failed_uids}). Will retry next minute."
+            )
 
     # ── End-of-Day Daily Reminder ─────────────────────────────────────────────
 

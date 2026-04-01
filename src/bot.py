@@ -1,5 +1,4 @@
 from __future__ import annotations
-from __future__ import annotations
 """
 bot.py — Discord Task Bot entry point
 """
@@ -125,22 +124,34 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 # silently drop the morning message.  The digest fires as soon as the clock
 # reaches DAILY_POST_HOUR:DAILY_POST_MINUTE on any day it hasn't yet run.
 _last_digest_date: Optional[date] = None
+# Per-user send tracking: users whose digest was successfully delivered today.
+# Cleared once per calendar day so retries skip already-delivered users and
+# avoid duplicate sends.
+_digest_sent_today: set[int] = set()
+_digest_sent_date: Optional[date] = None
 
 
 @tasks.loop(minutes=1)
 async def daily_digest():
-    global _last_digest_date
+    global _last_digest_date, _digest_sent_today, _digest_sent_date
     tz = pytz.timezone(TIMEZONE)
     now = datetime.now(tz)
     today = now.date()
+
+    # Reset per-user tracking once per calendar day (not on every retry).
+    if _digest_sent_date != today:
+        _digest_sent_today = set()
+        _digest_sent_date = today
+
     past_post_time = (now.hour, now.minute) >= (DAILY_POST_HOUR, DAILY_POST_MINUTE)
     if past_post_time and _last_digest_date != today:
         log.info("Running daily digest...")
         try:
-            await task_manager.post_daily_digest(bot)
+            await task_manager.post_daily_digest(bot, _digest_sent_today)
             _last_digest_date = today  # Only mark sent after a successful run
         except Exception as exc:
             # Don't set _last_digest_date — the loop will retry next minute.
+            # Users already in _digest_sent_today won't receive a duplicate.
             log.error(f"Daily digest failed, will retry next minute: {exc}", exc_info=True)
 
 
