@@ -220,8 +220,10 @@ async def test_digest_uses_cached_channel_when_available():
 @pytest.mark.asyncio
 async def test_digest_skips_user_when_fetch_channel_fails():
     """
-    If both get_channel() and fetch_channel() fail, the user is skipped
-    gracefully (no exception raised to the caller).
+    If both get_channel() and fetch_channel() fail for a user, the user is
+    added to failed_uids and post_daily_digest raises RuntimeError so the
+    caller knows to retry (and _last_digest_date is not set).
+    All other users are still attempted before the raise.
     """
     from task_manager import TaskManager
     from database import Database
@@ -241,8 +243,9 @@ async def test_digest_skips_user_when_fetch_channel_fails():
 
     tm = TaskManager(db)
 
-    # Should not raise
-    await tm.post_daily_digest(mock_bot)
+    # Should raise so the loop retries next minute
+    with pytest.raises(RuntimeError, match="Will retry next minute"):
+        await tm.post_daily_digest(mock_bot)
 
 
 # ─── Test 3: daily_digest loop retries when post_daily_digest raises ──────────
