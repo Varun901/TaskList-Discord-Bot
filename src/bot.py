@@ -706,6 +706,87 @@ async def daily_reminder_cmd(
     )
 
 
+# ─── /testdigest ──────────────────────────────────────────────────────────────
+
+@bot.tree.command(
+    name="testdigest",
+    description="Send your morning digest right now so you can verify everything is working.",
+)
+async def test_digest(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    user = _require_setup(interaction.user.id)
+    if not user:
+        await interaction.followup.send("❌ Run `/setup` first.", ephemeral=True)
+        return
+
+    # ── Resolve channel ───────────────────────────────────────────────────────
+    channel = bot.get_channel(user["channel_id"])
+    if not channel:
+        try:
+            channel = await bot.fetch_channel(user["channel_id"])
+        except discord.NotFound:
+            await interaction.followup.send(
+                "❌ **Channel not found.** The channel configured in `/setup` no longer exists.\n"
+                "Please run `/setup` again and choose a valid channel.",
+                ephemeral=True,
+            )
+            return
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "❌ **Missing access to the digest channel.** The bot cannot see the channel "
+                "configured in `/setup`. Check that the bot role has the **View Channel** "
+                "permission there, then re-run `/setup`.",
+                ephemeral=True,
+            )
+            return
+        except Exception as exc:
+            await interaction.followup.send(
+                f"❌ Could not fetch the digest channel: `{exc}`",
+                ephemeral=True,
+            )
+            return
+
+    # ── Resolve member ────────────────────────────────────────────────────────
+    member = channel.guild.get_member(interaction.user.id)
+    if not member:
+        try:
+            member = await channel.guild.fetch_member(interaction.user.id)
+        except Exception as exc:
+            await interaction.followup.send(
+                f"❌ Could not find you in the server: `{exc}`",
+                ephemeral=True,
+            )
+            return
+
+    # ── Build and send embed ──────────────────────────────────────────────────
+    today = datetime.now(pytz.timezone(TIMEZONE)).date()
+    try:
+        embed = await task_manager.build_task_embed(member, user, today)
+        await channel.send(
+            content=f"🌅 Good morning {member.mention}! Here are your tasks for today:",
+            embed=embed,
+        )
+        await interaction.followup.send(
+            f"✅ Test digest sent to {channel.mention}!",
+            ephemeral=True,
+        )
+        log.info(f"Manual test digest sent for user {interaction.user.id} to channel {channel.id}.")
+    except discord.Forbidden:
+        await interaction.followup.send(
+            f"❌ **Bot cannot send messages in {channel.mention}.**\n"
+            "This is most likely why your morning digest isn't arriving.\n\n"
+            "**Fix:** In your Discord server settings, make sure the bot's role has "
+            "**Send Messages** (and **Embed Links**) permission in that channel, "
+            "then run `/setup` again to confirm.",
+            ephemeral=True,
+        )
+    except Exception as exc:
+        await interaction.followup.send(
+            f"❌ Failed to send digest: `{exc}`",
+            ephemeral=True,
+        )
+
+
 # ─── /unlink ──────────────────────────────────────────────────────────────────
 
 @bot.tree.command(name="unlink", description="Remove your calendar integration and all data.")
@@ -742,6 +823,7 @@ async def help_cmd(interaction: discord.Interaction):
         ("/dailyreminder [time] [enabled]", "Set or toggle a daily end-of-day incomplete-task check-in"),
         ("/weekly", "Weekly summary, streak, and upcoming tasks"),
         ("/status", "Show your configuration and stats"),
+        ("/testdigest", "Send your morning digest right now to verify delivery"),
         ("/unlink", "Remove all your data"),
         ("/help", "Show this message"),
     ]
@@ -780,6 +862,7 @@ async def prefix_help(ctx: commands.Context):
         ("/dailyreminder [time] [enabled]", "Set or toggle a daily end-of-day incomplete-task check-in"),
         ("/weekly", "Weekly summary, streak, and upcoming tasks"),
         ("/status", "Show your configuration and stats"),
+        ("/testdigest", "Send your morning digest right now to verify delivery"),
         ("/unlink", "Remove all your data"),
         ("/help", "Show this message"),
     ]
