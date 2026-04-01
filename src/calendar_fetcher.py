@@ -57,46 +57,47 @@ async def fetch_google_tasks(
             if resp.status_code != 200:
                 return False, f"HTTP {resp.status_code}", []
             cal = iCal.from_ical(resp.content.decode("utf-8", errors="replace"))
+
+        tasks: List[Task] = []
+        td = target_date or date.today()
+
+        for component in cal.walk():
+            if component.name != "VEVENT":
+                continue
+
+            # Determine event date
+            dtstart = component.get("DTSTART")
+            if dtstart is None:
+                continue
+            dt = dtstart.dt
+            if isinstance(dt, datetime):
+                event_date = dt.date()
+            else:
+                event_date = dt  # already a date
+
+            if target_date is not None and event_date != td:
+                continue
+
+            summary = str(component.get("SUMMARY", "Untitled Event"))
+            description = str(component.get("DESCRIPTION", "")) or ""
+            url_prop = component.get("URL")
+            event_url = str(url_prop) if url_prop else None
+
+            tasks.append(
+                {
+                    "name": summary,
+                    "due": event_date,
+                    "description": description.strip(),
+                    "url": event_url,
+                }
+            )
+
+        # Sort by date
+        tasks.sort(key=lambda t: t["due"] or date.min)
+        return True, "", tasks
     except Exception as exc:
+        log.warning(f"fetch_google_tasks error for calendar {calendar_id!r}: {exc}")
         return False, str(exc), []
-
-    tasks: List[Task] = []
-    td = target_date or date.today()
-
-    for component in cal.walk():
-        if component.name != "VEVENT":
-            continue
-
-        # Determine event date
-        dtstart = component.get("DTSTART")
-        if dtstart is None:
-            continue
-        dt = dtstart.dt
-        if isinstance(dt, datetime):
-            event_date = dt.date()
-        else:
-            event_date = dt  # already a date
-
-        if target_date is not None and event_date != td:
-            continue
-
-        summary = str(component.get("SUMMARY", "Untitled Event"))
-        description = str(component.get("DESCRIPTION", "")) or ""
-        url_prop = component.get("URL")
-        event_url = str(url_prop) if url_prop else None
-
-        tasks.append(
-            {
-                "name": summary,
-                "due": event_date,
-                "description": description.strip(),
-                "url": event_url,
-            }
-        )
-
-    # Sort by date
-    tasks.sort(key=lambda t: t["due"] or date.min)
-    return True, "", tasks
 
 
 # ─── Notion ───────────────────────────────────────────────────────────────────
@@ -178,41 +179,42 @@ async def fetch_notion_tasks(
             if resp.status_code != 200:
                 return False, f"Notion API error {resp.status_code}: {resp.text}", []
             data = resp.json()
+
+        tasks: List[Task] = []
+        for page in data.get("results", []):
+            props = page.get("properties", {})
+            name = _extract_title(props)
+
+            # Find date property
+            due_date = None
+            for key in ("Date", "Due", "Due Date", "Deadline", "date", "due"):
+                if key in props and props[key].get("type") == "date":
+                    due_date = _extract_date(props[key])
+                    break
+
+            # Description / Notes
+            description = ""
+            for key in ("Description", "Notes", "Note", "Body", "description", "notes"):
+                if key in props and props[key].get("type") == "rich_text":
+                    description = _extract_rich_text(props[key])
+                    break
+
+            page_url = page.get("url")
+
+            tasks.append(
+                {
+                    "name": name,
+                    "due": due_date,
+                    "description": description.strip(),
+                    "url": page_url,
+                }
+            )
+
+        tasks.sort(key=lambda t: t["due"] or date.min)
+        return True, "", tasks
     except Exception as exc:
+        log.warning(f"fetch_notion_tasks error for database {database_id!r}: {exc}")
         return False, str(exc), []
-
-    tasks: List[Task] = []
-    for page in data.get("results", []):
-        props = page.get("properties", {})
-        name = _extract_title(props)
-
-        # Find date property
-        due_date = None
-        for key in ("Date", "Due", "Due Date", "Deadline", "date", "due"):
-            if key in props and props[key].get("type") == "date":
-                due_date = _extract_date(props[key])
-                break
-
-        # Description / Notes
-        description = ""
-        for key in ("Description", "Notes", "Note", "Body", "description", "notes"):
-            if key in props and props[key].get("type") == "rich_text":
-                description = _extract_rich_text(props[key])
-                break
-
-        page_url = page.get("url")
-
-        tasks.append(
-            {
-                "name": name,
-                "due": due_date,
-                "description": description.strip(),
-                "url": page_url,
-            }
-        )
-
-    tasks.sort(key=lambda t: t["due"] or date.min)
-    return True, "", tasks
 
 
 # ─── Unified entry point ──────────────────────────────────────────────────────
